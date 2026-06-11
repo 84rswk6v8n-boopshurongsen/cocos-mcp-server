@@ -626,11 +626,86 @@ async function loadWithPanelAutoStart(...args) {
 
     try {
         const settings = readPanelSettings();
-        if (settings.autoStart) {
-            await startPanelMcpServer({ port: settings.port });
+        const reloadRestart = globalThis.__cocosMcpReloadRestart;
+        globalThis.__cocosMcpReloadRestart = null;
+        if (settings.autoStart || (reloadRestart && reloadRestart.running)) {
+            await startPanelMcpServer({ port: (reloadRestart && reloadRestart.port) || settings.port });
         }
     } catch (error) {
         console.error('[cocos-mcp-server] 自动启动 MCP 服务器失败：', error);
+    }
+}
+
+async function requestCocosPluginReload() {
+    const packageName = 'cocos-mcp-server';
+    const attempts = [
+        ['extension', 'reload', packageName],
+        ['extension', 'reload', { name: packageName }],
+        ['extensions', 'reload', packageName],
+        ['extensions', 'reload', { name: packageName }],
+        ['package', 'reload', packageName],
+        ['package', 'reload', { name: packageName }],
+    ];
+    let lastError = null;
+
+    if (globalThis.Editor && Editor.Message && typeof Editor.Message.request === 'function') {
+        for (const [channel, message, payload] of attempts) {
+            try {
+                await Editor.Message.request(channel, message, payload);
+                return true;
+            } catch (error) {
+                lastError = error;
+            }
+        }
+    }
+
+    if (globalThis.Editor && Editor.Package && typeof Editor.Package.reload === 'function') {
+        await Editor.Package.reload(packageName);
+        return true;
+    }
+
+    if (lastError) {
+        throw lastError;
+    }
+    throw new Error('当前 Cocos Creator 版本没有可用的插件重载接口。');
+}
+
+async function devReloadPlugin() {
+    try {
+        const server = globalThis.__cocosMcpDevServer;
+        const status = server && typeof server.getStatus === 'function'
+            ? server.getStatus()
+            : {};
+        globalThis.__cocosMcpReloadRestart = {
+            running: !!status.running,
+            port: status.port || globalThis.__cocosMcpDevLastPort,
+        };
+
+        if (server && typeof server.stop === 'function') {
+            try {
+                server.stop();
+            } catch (_) {}
+        }
+
+        setTimeout(() => {
+            requestCocosPluginReload().catch((error) => {
+                console.error('[cocos-mcp-server] 重新加载插件失败：', error);
+            });
+        }, 50);
+
+        return {
+            success: true,
+            dev: true,
+            message: '插件重新加载命令已发送。',
+        };
+    } catch (error) {
+        const message = error && error.message ? error.message : String(error);
+        console.error('[cocos-mcp-server] 重新加载插件失败：', error);
+        return {
+            success: false,
+            dev: true,
+            message,
+        };
     }
 }
 
@@ -643,6 +718,7 @@ exports.getServerStatus = getPanelServerStatus;
 exports.devGetServerStatus = getPanelServerStatus;
 exports.devUpdateAutoStart = updatePanelAutoStart;
 exports.devGetRegisteredTools = devGetRegisteredTools;
+exports.devReloadPlugin = devReloadPlugin;
 exports.methods = exports.methods || {};
 exports.methods.startServer = startPanelMcpServer;
 exports.methods.devStartServer = startPanelMcpServer;
@@ -652,6 +728,7 @@ exports.methods.getServerStatus = getPanelServerStatus;
 exports.methods.devGetServerStatus = getPanelServerStatus;
 exports.methods.devUpdateAutoStart = updatePanelAutoStart;
 exports.methods.devGetRegisteredTools = devGetRegisteredTools;
+exports.methods.devReloadPlugin = devReloadPlugin;
 if (exports.default) {
     exports.default.load = loadWithPanelAutoStart;
     exports.default.methods = exports.default.methods || {};
@@ -663,4 +740,5 @@ if (exports.default) {
     exports.default.methods.devGetServerStatus = getPanelServerStatus;
     exports.default.methods.devUpdateAutoStart = updatePanelAutoStart;
     exports.default.methods.devGetRegisteredTools = devGetRegisteredTools;
+    exports.default.methods.devReloadPlugin = devReloadPlugin;
 }

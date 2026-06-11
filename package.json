@@ -93,6 +93,11 @@
                     "devGetRegisteredTools"
                 ]
             },
+            "dev-reload-plugin": {
+                "methods": [
+                    "devReloadPlugin"
+                ]
+            },
             "stop-server": {
                 "methods": [
                     "stopServer"

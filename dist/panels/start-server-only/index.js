@@ -35,6 +35,9 @@ const text = {
     toolsEmpty: '\u6682\u65e0\u5de5\u5177\u6570\u636e\u3002',
     toolsFailed: '\u8bfb\u53d6\u5de5\u5177\u5217\u8868\u5931\u8d25\u3002',
     wechatCopied: '\u5fae\u4fe1\u5df2\u590d\u5236\u3002',
+    reloadingPlugin: '\u6b63\u5728\u91cd\u65b0\u52a0\u8f7d\u63d2\u4ef6...',
+    reloadPluginSent: '\u63d2\u4ef6\u91cd\u65b0\u52a0\u8f7d\u547d\u4ee4\u5df2\u53d1\u9001\u3002',
+    reloadPluginFailed: '\u91cd\u65b0\u52a0\u8f7d\u63d2\u4ef6\u5931\u8d25\u3002',
 };
 
 module.exports = Editor.Panel.define({
@@ -43,6 +46,7 @@ module.exports = Editor.Panel.define({
     $: {
         startMcpServer: '#startMcpServer',
         stopMcpServer: '#stopMcpServer',
+        reloadPlugin: '#reloadPlugin',
         refreshStatus: '#refreshStatus',
         refreshTools: '#refreshTools',
         serverState: '#serverState',
@@ -58,11 +62,15 @@ module.exports = Editor.Panel.define({
         statusMessage: '#statusMessage',
         mcpVersion: '#mcpVersion',
         mcpWechatContact: '#mcpWechatContact',
+        toolTooltip: '#toolTooltip',
+        toolTooltipTitle: '#toolTooltipTitle',
+        toolTooltipDesc: '#toolTooltipDesc',
     },
 
     ready() {
         const startButton = this.$.startMcpServer;
         const stopButton = this.$.stopMcpServer;
+        const reloadPluginButton = this.$.reloadPlugin;
         const refreshButton = this.$.refreshStatus;
         const refreshToolsButton = this.$.refreshTools;
         const portControl = this.$.portControl;
@@ -71,6 +79,7 @@ module.exports = Editor.Panel.define({
         let currentAction = 'start';
         let isBusy = false;
         let portInputDirty = false;
+        let activeToolItem = null;
         let currentStatus = {
             running: false,
             port: '-',
@@ -178,6 +187,7 @@ module.exports = Editor.Panel.define({
             isBusy = busy;
             startButton.disabled = busy;
             stopButton.disabled = busy;
+            reloadPluginButton.disabled = busy;
             refreshButton.disabled = busy;
             refreshToolsButton.disabled = busy;
             if (autoStartInput) {
@@ -338,7 +348,62 @@ module.exports = Editor.Panel.define({
             return copied;
         };
 
+        const hideToolTooltip = () => {
+            if (activeToolItem) {
+                activeToolItem.classList.remove('active');
+                activeToolItem = null;
+            }
+            if (this.$.toolTooltip) {
+                this.$.toolTooltip.classList.remove('show');
+            }
+        };
+
+        const showToolTooltip = (item, name, description) => {
+            const tooltip = this.$.toolTooltip;
+            if (!tooltip) {
+                return;
+            }
+
+            if (activeToolItem && activeToolItem !== item) {
+                activeToolItem.classList.remove('active');
+            }
+
+            activeToolItem = item;
+            item.classList.add('active');
+            setText(this.$.toolTooltipTitle, name || '-');
+            setText(this.$.toolTooltipDesc, description || '\u65e0\u8bf4\u660e');
+
+            tooltip.classList.add('show');
+            tooltip.style.left = '0px';
+            tooltip.style.top = '0px';
+
+            const margin = 12;
+            const itemRect = item.getBoundingClientRect();
+            const tooltipRect = tooltip.getBoundingClientRect();
+            let left = itemRect.left;
+            let top = itemRect.top;
+
+            if (left + tooltipRect.width > window.innerWidth - margin) {
+                left = window.innerWidth - tooltipRect.width - margin;
+            }
+            if (top + tooltipRect.height > window.innerHeight - margin) {
+                top = window.innerHeight - tooltipRect.height - margin;
+            }
+
+            tooltip.style.left = `${Math.max(margin, left)}px`;
+            tooltip.style.top = `${Math.max(margin, top)}px`;
+        };
+
+        const bindToolTooltip = (item, name, description) => {
+            item.setAttribute('title', description || '\u65e0\u8bf4\u660e');
+            item.addEventListener('click', (event) => {
+                event.stopPropagation();
+                showToolTooltip(item, name, description);
+            });
+        };
+
         const renderTools = (result) => {
+            hideToolTooltip();
             const tools = result && Array.isArray(result.tools) ? result.tools : [];
             const skills = result && Array.isArray(result.skills) ? result.skills : [];
             const source = result && result.source ? result.source : 'MCP';
@@ -366,6 +431,7 @@ module.exports = Editor.Panel.define({
                 desc.className = 'tool-desc';
                 desc.textContent = tool.description || '\u65e0\u8bf4\u660e';
 
+                bindToolTooltip(item, name.textContent, desc.textContent);
                 item.appendChild(name);
                 item.appendChild(desc);
                 this.$.toolsList.appendChild(item);
@@ -383,6 +449,7 @@ module.exports = Editor.Panel.define({
                 desc.className = 'tool-desc';
                 desc.textContent = skill.description || '\u65e0\u8bf4\u660e';
 
+                bindToolTooltip(item, name.textContent, desc.textContent);
                 item.appendChild(name);
                 item.appendChild(desc);
                 this.$.toolsList.appendChild(item);
@@ -390,6 +457,7 @@ module.exports = Editor.Panel.define({
         };
 
         const renderEmptyTools = () => {
+            hideToolTooltip();
             clearElement(this.$.toolsList);
             const empty = document.createElement('div');
             empty.className = 'empty-tools';
@@ -525,6 +593,24 @@ module.exports = Editor.Panel.define({
             }
         };
 
+        const reloadPlugin = async () => {
+            reloadPluginButton.disabled = true;
+            setText(this.$.statusMessage, text.reloadingPlugin);
+
+            try {
+                const result = await Editor.Message.request('cocos-mcp-server', 'dev-reload-plugin');
+                if (!result || result.success === false) {
+                    setText(this.$.statusMessage, result && result.message ? result.message : text.reloadPluginFailed);
+                    reloadPluginButton.disabled = false;
+                    return;
+                }
+                setText(this.$.statusMessage, result.message || text.reloadPluginSent);
+            } catch (error) {
+                setText(this.$.statusMessage, error && error.message ? error.message : text.reloadPluginFailed);
+                reloadPluginButton.disabled = false;
+            }
+        };
+
         if (portInput) {
             portInput.addEventListener('input', () => {
                 portInputDirty = true;
@@ -539,6 +625,23 @@ module.exports = Editor.Panel.define({
             autoStartInput.addEventListener('change', updateAutoStart);
         }
 
+        this._hideToolTooltipOnClick = (event) => {
+            if (
+                this.$.toolTooltip
+                && !this.$.toolTooltip.contains(event.target)
+                && !(event.target && event.target.closest && event.target.closest('.tool-item'))
+            ) {
+                hideToolTooltip();
+            }
+        };
+        this._hideToolTooltipOnKeydown = (event) => {
+            if (event.key === 'Escape') {
+                hideToolTooltip();
+            }
+        };
+        document.addEventListener('click', this._hideToolTooltipOnClick);
+        document.addEventListener('keydown', this._hideToolTooltipOnKeydown);
+
         startButton.addEventListener('click', async () => {
             if (currentAction === 'address') {
                 const url = getServerUrl(currentStatus);
@@ -551,6 +654,7 @@ module.exports = Editor.Panel.define({
         });
 
         stopButton.addEventListener('click', stopServer);
+        reloadPluginButton.addEventListener('click', reloadPlugin);
         this.$.mcpWechatContact.addEventListener('click', async () => {
             await copyText('13272695146');
             setText(this.$.statusMessage, text.wechatCopied);
@@ -563,6 +667,14 @@ module.exports = Editor.Panel.define({
     },
 
     beforeClose() {
+        if (this._hideToolTooltipOnClick) {
+            document.removeEventListener('click', this._hideToolTooltipOnClick);
+            this._hideToolTooltipOnClick = null;
+        }
+        if (this._hideToolTooltipOnKeydown) {
+            document.removeEventListener('keydown', this._hideToolTooltipOnKeydown);
+            this._hideToolTooltipOnKeydown = null;
+        }
         if (this._statusTimer) {
             clearInterval(this._statusTimer);
             this._statusTimer = null;

@@ -29,6 +29,8 @@
 
     .server-status {
         min-width: 0;
+        display: flex;
+        flex-direction: column;
     }
 
     .tools-panel {
@@ -171,6 +173,33 @@
         margin: 0;
     }
 
+    .reload-plugin-row {
+        margin-top: auto;
+        padding-top: 16px;
+        display: flex;
+        justify-content: flex-start;
+    }
+
+    .reload-plugin-button {
+        height: 28px;
+        padding: 0 12px;
+        border: 1px solid var(--color-normal-border, #4b5563);
+        background: transparent;
+        color: #d1d5db;
+        cursor: pointer;
+        font-size: 12px;
+    }
+
+    .reload-plugin-button:hover {
+        border-color: #3d7eff;
+        color: #f3f4f6;
+    }
+
+    .reload-plugin-button:disabled {
+        opacity: 0.6;
+        cursor: default;
+    }
+
     .status-message {
         min-height: 18px;
         color: #9ca3af;
@@ -285,6 +314,13 @@
         border: 1px solid var(--color-normal-border, #343434);
         background: rgba(0, 0, 0, 0.16);
         padding: 7px 8px;
+        cursor: pointer;
+    }
+
+    .tool-item:hover,
+    .tool-item.active {
+        border-color: #3d7eff;
+        background: rgba(61, 126, 255, 0.12);
     }
 
     .tool-name {
@@ -310,6 +346,40 @@
         color: #9ca3af;
         font-size: 12px;
         padding: 12px 0;
+    }
+
+    .tool-tooltip {
+        position: fixed;
+        z-index: 9999;
+        display: none;
+        width: min(420px, calc(100vw - 24px));
+        max-height: 240px;
+        overflow: auto;
+        border: 1px solid #3d7eff;
+        background: #111827;
+        color: #d1d5db;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+        padding: 10px 12px;
+    }
+
+    .tool-tooltip.show {
+        display: block;
+    }
+
+    .tool-tooltip-title {
+        color: #f3f4f6;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 8px;
+        word-break: break-all;
+    }
+
+    .tool-tooltip-desc {
+        color: #d1d5db;
+        font-size: 12px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        word-break: break-word;
     }
 
     @media (max-width: 760px) {
@@ -365,6 +435,9 @@
                     <span>重启 Cocos 后自动启动 MCP 服务器</span>
                 </label>
             </div>
+            <div class="reload-plugin-row">
+                <button id="reloadPlugin" class="reload-plugin-button">重新加载插件</button>
+            </div>
         </div>
 
         <div class="tools-panel">
@@ -388,5 +461,9 @@
             <div id="mcpVersion" class="mcp-version-line">MCP 版本：-</div>
             <div id="mcpWechatContact" class="mcp-version-line mcp-contact">舒荣森开发，如有必要请联系微信：13272695146</div>
         </div>
+    </div>
+    <div id="toolTooltip" class="tool-tooltip">
+        <div id="toolTooltipTitle" class="tool-tooltip-title"></div>
+        <div id="toolTooltipDesc" class="tool-tooltip-desc"></div>
     </div>
 </div>

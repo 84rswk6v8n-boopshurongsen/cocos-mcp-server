@@ -10,7 +10,7 @@ class AnimationMaskHandler {
             name: 'animation_mask',
             description: [
                 'Animation Mask asset editing — create/query/update .animask resources for Marionette animation layers.',
-                'Actions: create, query, set_joint, batch_set_joints, remove_joint, clear, list.',
+                'Actions: create, query, set_joint, batch_set_joints, remove_joint, clear, list, inspect_skeleton, validate_paths, skeleton_path_normalize, source_adapters.',
                 'Example: {action:"batch_set_joints", url:"db://assets/masks/UpperBody.animask", joints:[{path:"Root/Spine", enabled:true}]}'
             ].join('\n'),
             inputSchema: {
@@ -18,7 +18,7 @@ class AnimationMaskHandler {
                 properties: {
                     action: {
                         type: 'string',
-                        enum: ['create', 'query', 'set_joint', 'batch_set_joints', 'remove_joint', 'clear', 'list'],
+                        enum: ['create', 'query', 'set_joint', 'batch_set_joints', 'remove_joint', 'clear', 'list', 'inspect_skeleton', 'validate_paths', 'skeleton_path_normalize', 'source_adapters'],
                         description: 'Animation mask action to perform'
                     },
                     url: {
@@ -60,6 +60,40 @@ class AnimationMaskHandler {
                     createIfMissing: {
                         type: 'boolean',
                         description: 'Update action: create the mask file when missing, default true'
+                    },
+                    sourceType: {
+                        type: 'string',
+                        enum: ['node', 'prefab', 'model'],
+                        description: 'Skeleton source type for inspect_skeleton/validate_paths'
+                    },
+                    node: {
+                        type: 'string',
+                        description: 'Scene node path or UUID for sourceType=node'
+                    },
+                    sourceUrl: {
+                        type: 'string',
+                        description: 'Prefab/model asset URL for skeleton inspection'
+                    },
+                    modelUrl: {
+                        type: 'string',
+                        description: 'Model asset URL for sourceType=model'
+                    },
+                    prefabUrl: {
+                        type: 'string',
+                        description: 'Prefab asset URL for sourceType=prefab'
+                    },
+                    paths: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'Joint paths for validate_paths/skeleton_path_normalize'
+                    },
+                    rootName: {
+                        type: 'string',
+                        description: 'Skeleton root name used to strip scene-node prefixes, e.g. Bip001'
+                    },
+                    includeRoot: {
+                        type: 'boolean',
+                        description: 'Include root joints when inspecting skeletons, default true'
                     }
                 },
                 required: ['action']
@@ -83,6 +117,14 @@ class AnimationMaskHandler {
                 return await this.clearMask(args);
             case 'list':
                 return await this.listMasks(args);
+            case 'inspect_skeleton':
+                return await this.inspectSkeleton(args);
+            case 'validate_paths':
+                return await this.validatePaths(args);
+            case 'skeleton_path_normalize':
+                return await this.normalizeSkeletonPaths(args);
+            case 'source_adapters':
+                return this.getSourceAdapters();
             default:
                 return {
                     success: false,
@@ -252,6 +294,396 @@ class AnimationMaskHandler {
                 masks
             }
         };
+    }
+
+    async inspectSkeleton(args) {
+        const sourceType = this.normalizeSourceType(args);
+        const inspection = await this.inspectSkeletonSource(sourceType, args);
+        const joints = this.buildJointDetails(inspection.paths, args.includeRoot !== false);
+
+        return {
+            success: true,
+            data: {
+                sourceType,
+                source: inspection.source,
+                adapter: inspection.adapter,
+                roots: this.getRootNames(joints),
+                jointCount: joints.length,
+                joints
+            }
+        };
+    }
+
+    async validatePaths(args) {
+        const paths = this.normalizePathList(args.paths || (args.path ? [args.path] : []));
+        if (paths.length === 0) {
+            throw new Error('paths or path is required');
+        }
+
+        const sourceType = this.normalizeSourceType(args);
+        const inspection = await this.inspectSkeletonSource(sourceType, args);
+        const sourcePaths = new Set(this.normalizePathList(inspection.paths));
+        const rootNames = args.rootName ? [args.rootName] : this.getRootNamesFromPaths(inspection.paths);
+        const valid = [];
+        const invalid = [];
+
+        for (const input of paths) {
+            const normalized = this.normalizeSkeletonPath(input, { rootNames });
+            const item = { input, normalized };
+            if (sourcePaths.has(normalized)) {
+                valid.push(item);
+            } else {
+                invalid.push(item);
+            }
+        }
+
+        return {
+            success: true,
+            data: {
+                sourceType,
+                source: inspection.source,
+                total: paths.length,
+                validCount: valid.length,
+                invalidCount: invalid.length,
+                valid,
+                invalid
+            }
+        };
+    }
+
+    async normalizeSkeletonPaths(args) {
+        const paths = this.normalizePathList(args.paths || (args.path ? [args.path] : []));
+        if (paths.length === 0) {
+            throw new Error('paths or path is required');
+        }
+
+        let rootNames = args.rootName ? [args.rootName] : [];
+        if (rootNames.length === 0 && args.sourceType) {
+            const sourceType = this.normalizeSourceType(args);
+            const inspection = await this.inspectSkeletonSource(sourceType, args);
+            rootNames = this.getRootNamesFromPaths(inspection.paths);
+        }
+
+        const mappings = paths.map((input) => ({
+            input,
+            normalized: this.normalizeSkeletonPath(input, { rootNames })
+        }));
+
+        return {
+            success: true,
+            data: {
+                rootNames,
+                count: mappings.length,
+                paths: mappings.map((item) => item.normalized),
+                mappings
+            }
+        };
+    }
+
+    getSourceAdapters() {
+        return {
+            success: true,
+            data: {
+                adapters: [
+                    {
+                        sourceType: 'node',
+                        status: 'supported',
+                        inputs: ['node'],
+                        description: 'Read a live scene node hierarchy through Editor.Message scene execution.'
+                    },
+                    {
+                        sourceType: 'prefab',
+                        status: 'supported',
+                        inputs: ['prefabUrl', 'sourceUrl', 'url'],
+                        description: 'Read serialized prefab/node JSON and extract hierarchy paths.'
+                    },
+                    {
+                        sourceType: 'model',
+                        status: 'supported',
+                        inputs: ['modelUrl', 'sourceUrl', 'url'],
+                        description: 'Read Cocos imported model metadata and prefer its redirected prefab hierarchy.'
+                    }
+                ]
+            }
+        };
+    }
+
+    normalizeSourceType(args) {
+        if (args.sourceType) {
+            return this.requireString(args.sourceType, 'sourceType');
+        }
+        if (args.node) {
+            return 'node';
+        }
+        const url = args.prefabUrl || args.modelUrl || args.sourceUrl || args.url || '';
+        if (/\.prefab$/i.test(url)) {
+            return 'prefab';
+        }
+        if (url) {
+            return 'model';
+        }
+        throw new Error('sourceType is required when source cannot be inferred');
+    }
+
+    async inspectSkeletonSource(sourceType, args) {
+        switch (sourceType) {
+            case 'node':
+                return await this.inspectNodeSkeleton(args);
+            case 'prefab':
+                return await this.inspectPrefabSkeleton(args);
+            case 'model':
+                return await this.inspectModelSkeleton(args);
+            default:
+                throw new Error(`Unsupported skeleton sourceType: ${sourceType}`);
+        }
+    }
+
+    async inspectNodeSkeleton(args) {
+        const node = this.requireString(args.node, 'node');
+        if (!this.canUseEditorMessage()) {
+            throw new Error('sourceType=node requires Cocos Editor.Message');
+        }
+
+        const script = `
+(() => {
+  const target = ${JSON.stringify(node)};
+  const rootName = ${JSON.stringify(args.rootName || '')};
+  const scene = typeof cc !== 'undefined' && cc.director && cc.director.getScene ? cc.director.getScene() : null;
+  if (!scene) return { success: false, error: 'Scene is not available' };
+  const childrenOf = (node) => node.children || node._children || [];
+  const nameOf = (node) => node.name || node._name || '';
+  const uuidOf = (node) => node.uuid || node._uuid || '';
+  const find = (current, parts, index) => {
+    if (!current) return null;
+    if (index >= parts.length) return current;
+    for (const child of childrenOf(current)) {
+      if (nameOf(child) === parts[index]) {
+        const found = find(child, parts, index + 1);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  const findByUuid = (current, uuid) => {
+    if (!current) return null;
+    if (uuidOf(current) === uuid) return current;
+    for (const child of childrenOf(current)) {
+      const found = findByUuid(child, uuid);
+      if (found) return found;
+    }
+    return null;
+  };
+  const normalizedTarget = target.replace(/\\\\/g, '/').replace(/^\\/+|\\/+$/g, '');
+  const start = findByUuid(scene, target) || find(scene, normalizedTarget.split('/').filter(Boolean), 0);
+  if (!start) return { success: false, error: 'Node not found: ' + target };
+  const paths = [];
+  const walk = (current, prefix) => {
+    const currentName = nameOf(current);
+    const path = prefix ? prefix + '/' + currentName : currentName;
+    const components = current.components || current._components || [];
+    if ((current !== start || currentName === rootName) && (components.length === 0 || childrenOf(current).length > 0)) {
+      paths.push(path);
+    }
+    for (const child of childrenOf(current)) {
+      walk(child, path);
+    }
+  };
+  walk(start, '');
+  const stripRoot = (value) => {
+    const parts = value.split('/').filter(Boolean);
+    const index = rootName ? parts.indexOf(rootName) : -1;
+    return index >= 0 ? parts.slice(index).join('/') : value;
+  };
+  return { success: true, paths: paths.map(stripRoot), node: target };
+})()
+`;
+        const result = await this.executeSceneScript(script);
+        if (!result || result.success === false) {
+            throw new Error((result && result.error) || `Failed to inspect node skeleton: ${node}`);
+        }
+
+        return {
+            adapter: 'node',
+            source: node,
+            paths: result.paths || []
+        };
+    }
+
+    async inspectPrefabSkeleton(args) {
+        const url = this.requireString(args.prefabUrl || args.sourceUrl || args.url, 'prefabUrl');
+        const source = await this.resolveAssetSource(url, true);
+        const paths = this.readSerializedNodePaths(source);
+        return {
+            adapter: 'prefab',
+            source: url,
+            paths
+        };
+    }
+
+    async inspectModelSkeleton(args) {
+        const url = this.requireString(args.modelUrl || args.sourceUrl || args.url, 'modelUrl');
+        const source = await this.resolveAssetSource(url, true);
+        const metaPath = `${source}.meta`;
+        if (!fs.existsSync(metaPath)) {
+            throw new Error(`Model meta not found: ${url}`);
+        }
+
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        const redirect = meta && meta.userData && meta.userData.redirect;
+        if (redirect) {
+            const prefabSource = this.resolveLibraryJsonByUuid(redirect);
+            if (prefabSource && fs.existsSync(prefabSource)) {
+                return {
+                    adapter: 'model:redirected-prefab',
+                    source: url,
+                    paths: this.readSerializedNodePaths(prefabSource)
+                };
+            }
+        }
+
+        const skeletons = meta && meta.userData && meta.userData.assetFinder && meta.userData.assetFinder.skeletons || [];
+        const paths = [];
+        for (const uuid of skeletons) {
+            const skeletonSource = this.resolveLibraryJsonByUuid(uuid);
+            if (!skeletonSource || !fs.existsSync(skeletonSource)) {
+                continue;
+            }
+            const skeleton = JSON.parse(fs.readFileSync(skeletonSource, 'utf8'));
+            if (Array.isArray(skeleton._joints)) {
+                paths.push(...skeleton._joints);
+            }
+        }
+
+        return {
+            adapter: 'model:skeleton-json',
+            source: url,
+            paths
+        };
+    }
+
+    async executeSceneScript(script) {
+        const attempts = [
+            () => Editor.Message.request('scene', 'execute-scene-script', { script }),
+            () => Editor.Message.request('scene', 'execute-scene-script', script)
+        ];
+        for (const attempt of attempts) {
+            try {
+                return await attempt();
+            } catch (_) {}
+        }
+        throw new Error('Failed to execute scene script');
+    }
+
+    readSerializedNodePaths(source) {
+        const raw = fs.readFileSync(source, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) {
+            return [];
+        }
+
+        const rootRef = parsed[0] && parsed[0].data && parsed[0].data.__id__;
+        const rootIndex = typeof rootRef === 'number'
+            ? rootRef
+            : parsed.findIndex((entry) => entry && entry.__type__ === 'cc.Node');
+        if (rootIndex < 0) {
+            return [];
+        }
+
+        const paths = [];
+        const visit = (nodeIndex, prefix, includeCurrent) => {
+            const node = parsed[nodeIndex];
+            if (!node || node.__type__ !== 'cc.Node') {
+                return;
+            }
+            const name = node._name || '';
+            const currentPath = prefix ? `${prefix}/${name}` : name;
+            if (includeCurrent && name) {
+                paths.push(currentPath);
+            }
+            for (const childRef of node._children || []) {
+                if (childRef && typeof childRef.__id__ === 'number') {
+                    visit(childRef.__id__, includeCurrent ? currentPath : '', true);
+                }
+            }
+        };
+        visit(rootIndex, '', false);
+        return paths;
+    }
+
+    buildJointDetails(paths, includeRoot) {
+        const normalized = this.normalizePathList(paths);
+        const filtered = includeRoot
+            ? normalized
+            : normalized.filter((item) => item.includes('/'));
+        const unique = Array.from(new Set(filtered)).sort((left, right) => {
+            const leftDepth = left.split('/').length;
+            const rightDepth = right.split('/').length;
+            return leftDepth === rightDepth ? left.localeCompare(right) : leftDepth - rightDepth;
+        });
+        const directChildCounts = new Map(unique.map((item) => [item, 0]));
+
+        for (const item of unique) {
+            const parent = item.split('/').slice(0, -1).join('/');
+            if (directChildCounts.has(parent)) {
+                directChildCounts.set(parent, directChildCounts.get(parent) + 1);
+            }
+        }
+
+        return unique.map((item) => {
+            const segments = item.split('/');
+            return {
+                name: segments[segments.length - 1],
+                path: item,
+                depth: segments.length - 1,
+                childrenCount: directChildCounts.get(item) || 0
+            };
+        });
+    }
+
+    normalizePathList(paths) {
+        if (!Array.isArray(paths)) {
+            throw new Error('paths must be an array');
+        }
+        return paths
+            .filter((item) => typeof item === 'string' && item.trim())
+            .map((item) => item.replace(/\\/g, '/').replace(/^\/+|\/+$/g, ''))
+            .filter(Boolean);
+    }
+
+    normalizeSkeletonPath(input, options = {}) {
+        const clean = this.normalizePathList([input])[0] || '';
+        const rootNames = (options.rootNames || [])
+            .filter((item) => typeof item === 'string' && item.trim())
+            .map((item) => item.trim());
+        if (rootNames.length === 0) {
+            return clean;
+        }
+
+        const segments = clean.split('/').filter(Boolean);
+        for (const rootName of rootNames) {
+            const index = segments.indexOf(rootName);
+            if (index >= 0) {
+                return segments.slice(index).join('/');
+            }
+        }
+        return clean;
+    }
+
+    getRootNames(joints) {
+        return Array.from(new Set(joints.map((joint) => joint.path.split('/')[0]).filter(Boolean)));
+    }
+
+    getRootNamesFromPaths(paths) {
+        return Array.from(new Set(this.normalizePathList(paths).map((item) => item.split('/')[0]).filter(Boolean)));
+    }
+
+    resolveLibraryJsonByUuid(uuid) {
+        if (typeof uuid !== 'string' || !uuid.trim()) {
+            return null;
+        }
+        const clean = uuid.trim();
+        const libraryPath = path.join(this.getProjectPath(), 'library');
+        return path.join(libraryPath, clean.slice(0, 2), `${clean}.json`);
     }
 
     readMaskFile(source) {

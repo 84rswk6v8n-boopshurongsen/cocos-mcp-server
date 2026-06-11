@@ -1,8 +1,22 @@
 'use strict';
 
-const { AnimationMaskHandler } = require('./handlers/animation-mask-handler');
+const PATCH_FLAG = Symbol.for('cocos-mcp-server.animation-tools-patch.v1');
+const MASK_HANDLER_MODULE = './handlers/animation-mask-handler';
+const GRAPH_HANDLER_MODULE = './handlers/animation-graph-handler';
 
-const PATCH_FLAG = Symbol.for('cocos-mcp-server.animation-mask-patch');
+function createAnimationMaskHandler() {
+    const handlerPath = require.resolve(MASK_HANDLER_MODULE);
+    delete require.cache[handlerPath];
+    const { AnimationMaskHandler } = require(MASK_HANDLER_MODULE);
+    return new AnimationMaskHandler();
+}
+
+function createAnimationGraphHandler() {
+    const handlerPath = require.resolve(GRAPH_HANDLER_MODULE);
+    delete require.cache[handlerPath];
+    const { AnimationGraphHandler } = require(GRAPH_HANDLER_MODULE);
+    return new AnimationGraphHandler();
+}
 
 function install() {
     const cocosToolsModule = require('./cocos-tools');
@@ -16,29 +30,36 @@ function install() {
 
     const originalGetTools = CocosTools.prototype.getTools;
     const originalExecute = CocosTools.prototype.execute;
-    const handlers = new WeakMap();
-
-    const getHandler = (instance) => {
-        let handler = handlers.get(instance);
-        if (!handler) {
-            handler = new AnimationMaskHandler();
-            handlers.set(instance, handler);
-        }
-        return handler;
-    };
-
     CocosTools.prototype.getTools = function patchedGetTools() {
         const tools = originalGetTools.call(this);
-        if (!tools.some((tool) => tool && tool.name === 'animation_mask')) {
-            tools.push(getHandler(this).getToolDefinition());
+        for (const definition of [
+            createAnimationMaskHandler().getToolDefinition(),
+            createAnimationGraphHandler().getToolDefinition()
+        ]) {
+            const index = tools.findIndex((tool) => tool && tool.name === definition.name);
+            if (index >= 0) {
+                tools[index] = definition;
+            } else {
+                tools.push(definition);
+            }
         }
         return tools;
     };
 
     CocosTools.prototype.execute = async function patchedExecute(toolName, args) {
-        if (toolName === 'animation_mask') {
+        if (toolName === 'animation_mask' || toolName === 'cocos_animation_mask') {
             try {
-                return await getHandler(this).execute(args || {});
+                return await createAnimationMaskHandler().execute(args || {});
+            } catch (error) {
+                return {
+                    success: false,
+                    error: error && error.message ? error.message : String(error)
+                };
+            }
+        }
+        if (toolName === 'animation_graph' || toolName === 'cocos_animation_graph') {
+            try {
+                return await createAnimationGraphHandler().execute(args || {});
             } catch (error) {
                 return {
                     success: false,
