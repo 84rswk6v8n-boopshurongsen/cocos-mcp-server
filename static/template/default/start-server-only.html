@@ -1,0 +1,392 @@
+<style>
+    .start-server-only {
+        height: 100%;
+        min-height: 260px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: var(--color-normal-fill, #1f1f1f);
+        color: var(--color-normal-contrast, #ddd);
+        font-size: 13px;
+    }
+
+    .panel-layout {
+        width: min(1060px, calc(100% - 48px));
+        display: grid;
+        grid-template-columns: minmax(420px, 1fr) minmax(280px, 360px);
+        gap: 16px;
+        align-items: stretch;
+    }
+
+    .server-status,
+    .tools-panel {
+        border: 1px solid var(--color-normal-border, #3a3a3a);
+        background: var(--color-normal-fill-emphasis, #252525);
+        padding: 14px 16px;
+    }
+
+    .server-status {
+        min-width: 0;
+    }
+
+    .tools-panel {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        min-height: 218px;
+    }
+
+    .status-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+    }
+
+    .status-title {
+        font-size: 14px;
+        font-weight: 600;
+    }
+
+    .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 86px;
+        justify-content: flex-end;
+        color: #9ca3af;
+        margin-bottom: 6px;
+    }
+
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #6b7280;
+    }
+
+    .status-pill.running {
+        color: #67d391;
+    }
+
+    .status-pill.running .status-dot {
+        background: #22c55e;
+        box-shadow: 0 0 8px rgba(34, 197, 94, 0.45);
+    }
+
+    .status-pill.stopped {
+        color: #f87171;
+    }
+
+    .status-pill.stopped .status-dot {
+        background: #ef4444;
+    }
+
+    .status-pill.abnormal {
+        color: #fbbf24;
+    }
+
+    .status-pill.abnormal .status-dot {
+        background: #f59e0b;
+        box-shadow: 0 0 8px rgba(245, 158, 11, 0.45);
+    }
+
+    .status-row {
+        display: grid;
+        grid-template-columns: 94px minmax(0, 1fr);
+        gap: 10px;
+        min-height: 28px;
+        align-items: center;
+    }
+
+    .status-label {
+        color: #9ca3af;
+    }
+
+    .status-value {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: #f3f4f6;
+    }
+
+    .port-control {
+        display: grid;
+        grid-template-columns: minmax(52px, max-content) minmax(104px, 1fr);
+        gap: 10px;
+        align-items: center;
+        min-width: 0;
+    }
+
+    .port-control.running {
+        grid-template-columns: minmax(52px, max-content);
+    }
+
+    .port-control.running .port-input {
+        display: none;
+    }
+
+    .port-input {
+        width: 100%;
+        max-width: 170px;
+        min-width: 0;
+        height: 24px;
+        box-sizing: border-box;
+        border: 1px solid var(--color-normal-border, #4b5563);
+        background: var(--color-normal-fill, #1b1b1b);
+        color: #f3f4f6;
+        padding: 0 8px;
+        outline: none;
+    }
+
+    .port-input:focus {
+        border-color: #3d7eff;
+        box-shadow: 0 0 0 1px rgba(61, 126, 255, 0.35);
+    }
+
+    .port-input.invalid {
+        border-color: #ef4444;
+        box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.35);
+    }
+
+    .option-row {
+        margin-top: 10px;
+        border-top: 1px solid var(--color-normal-border, #343434);
+        padding-top: 10px;
+    }
+
+    .auto-start-control {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #d1d5db;
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .auto-start-control input {
+        margin: 0;
+    }
+
+    .status-message {
+        min-height: 18px;
+        color: #9ca3af;
+        font-size: 12px;
+        text-align: left;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .panel-footer {
+        width: min(1060px, calc(100% - 48px));
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        align-items: center;
+        gap: 16px;
+        margin-top: -4px;
+    }
+
+    .mcp-version {
+        min-height: 18px;
+        color: #9ca3af;
+        font-size: 12px;
+        text-align: right;
+        line-height: 1.6;
+    }
+
+    .mcp-version-line {
+        white-space: nowrap;
+    }
+
+    .mcp-contact {
+        cursor: pointer;
+    }
+
+    .mcp-contact:hover {
+        color: #d1d5db;
+    }
+
+    .action-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .action-button {
+        min-width: 150px;
+        height: 40px;
+        padding: 0 18px;
+        border: 1px solid #3d7eff;
+        background: #2563eb;
+        color: #fff;
+        cursor: pointer;
+        font-size: 14px;
+    }
+
+    .action-button.secondary {
+        border-color: var(--color-normal-border, #4b5563);
+        background: transparent;
+        color: #d1d5db;
+    }
+
+    .action-button.danger {
+        border-color: #ef4444;
+        background: #b91c1c;
+        color: #fff;
+    }
+
+    .action-button:disabled {
+        opacity: 0.6;
+        cursor: default;
+    }
+
+    #refreshStatus,
+    #refreshTools {
+        border: 1px solid var(--color-normal-border, #4b5563);
+        background: transparent;
+        color: #d1d5db;
+        cursor: pointer;
+        height: 24px;
+        padding: 0 10px;
+        font-size: 12px;
+    }
+
+    #refreshStatus:disabled,
+    #refreshTools:disabled {
+        opacity: 0.6;
+        cursor: default;
+    }
+
+    .tools-summary {
+        color: #9ca3af;
+        font-size: 12px;
+        margin-bottom: 10px;
+    }
+
+    .tools-list {
+        flex: 1;
+        min-height: 120px;
+        max-height: 260px;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding-right: 2px;
+    }
+
+    .tool-item {
+        border: 1px solid var(--color-normal-border, #343434);
+        background: rgba(0, 0, 0, 0.16);
+        padding: 7px 8px;
+    }
+
+    .tool-name {
+        color: #f3f4f6;
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .tool-desc {
+        color: #9ca3af;
+        font-size: 11px;
+        line-height: 1.45;
+        margin-top: 4px;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    .empty-tools {
+        color: #9ca3af;
+        font-size: 12px;
+        padding: 12px 0;
+    }
+
+    @media (max-width: 760px) {
+        .panel-layout {
+            grid-template-columns: 1fr;
+        }
+
+        .panel-footer {
+            grid-template-columns: 1fr;
+            align-items: stretch;
+            gap: 4px;
+        }
+
+        .action-row {
+            justify-content: flex-start;
+        }
+
+        .mcp-version {
+            text-align: left;
+        }
+    }
+</style>
+
+<div class="start-server-only">
+    <div class="panel-layout">
+        <div class="server-status">
+            <div class="status-header">
+                <div class="status-title">MCP 服务器状态</div>
+                <button id="refreshStatus">刷新</button>
+            </div>
+            <div id="serverState" class="status-pill">
+                <span id="serverStateDot" class="status-dot"></span>
+                <span id="serverStateText">检测中...</span>
+            </div>
+            <div class="status-row">
+                <div class="status-label">端口</div>
+                <div id="portControl" class="port-control">
+                    <div id="serverPort" class="status-value">-</div>
+                    <input id="serverPortInput" class="port-input" type="number" min="1024" max="65535" step="1" placeholder="启动端口">
+                </div>
+            </div>
+            <div class="status-row">
+                <div class="status-label">连接数</div>
+                <div id="serverClients" class="status-value">-</div>
+            </div>
+            <div class="status-row">
+                <div class="status-label">MCP 地址</div>
+                <div id="serverUrl" class="status-value">-</div>
+            </div>
+            <div class="option-row">
+                <label class="auto-start-control">
+                    <input id="autoStartInput" type="checkbox">
+                    <span>重启 Cocos 后自动启动 MCP 服务器</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="tools-panel">
+            <div class="status-header">
+                <div class="status-title">已注册能力</div>
+                <button id="refreshTools">刷新列表</button>
+            </div>
+            <div id="toolsSummary" class="tools-summary">正在读取工具列表...</div>
+            <div id="toolsList" class="tools-list">
+                <div class="empty-tools">暂无工具数据。</div>
+            </div>
+        </div>
+    </div>
+    <div class="panel-footer">
+        <div id="statusMessage" class="status-message"></div>
+        <div class="action-row">
+            <button id="startMcpServer" class="action-button">启动 MCP 服务器</button>
+            <button id="stopMcpServer" class="action-button danger" style="display: none;">停止 MCP 服务器</button>
+        </div>
+        <div class="mcp-version">
+            <div id="mcpVersion" class="mcp-version-line">MCP 版本：-</div>
+            <div id="mcpWechatContact" class="mcp-version-line mcp-contact">舒荣森开发，如有必要请联系微信：13272695146</div>
+        </div>
+    </div>
+</div>

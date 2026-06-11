@@ -1,0 +1,279 @@
+{
+    "$schema": "./@types/schema/package/index.json",
+    "package_version": 2,
+    "name": "cocos-mcp-server",
+    "version": "1.7.5",
+    "author": "舒荣森",
+    "editor": ">=3.7.0",
+    "description": "i18n:cocos-mcp-server.description",
+    "main": "./dist/main-wrapper.js",
+    "dependencies": {
+        "@iarna/toml": "^2.2.5",
+        "fs-extra": "^11.3.0",
+        "uuid": "^9.0.1",
+        "vue": "^3.1.4"
+    },
+    "panels": {
+        "default": {
+            "title": "i18n:cocos-mcp-server.panel_title",
+            "type": "dockable",
+            "main": "dist/panels/default",
+            "icon": "./static/icon.png",
+            "size": {
+                "min-width": 400,
+                "min-height": 300,
+                "width": 600,
+                "height": 500
+            }
+        },
+        "start-server-only": {
+            "title": "启动 MCP 服务器",
+            "type": "dockable",
+            "main": "dist/panels/start-server-only",
+            "icon": "./static/icon.png",
+            "size": {
+                "min-width": 680,
+                "min-height": 260,
+                "width": 900,
+                "height": 360
+            }
+        }
+    },
+    "contributions": {
+        "menu": [
+            {
+                "path": "i18n:menu.extension/MCP 服务器",
+                "label": "启动 MCP 服务器",
+                "message": "open-start-server-only"
+            }
+        ],
+        "messages": {
+            "open-panel": {
+                "methods": [
+                    "openPanel"
+                ]
+            },
+            "open-start-server-only": {
+                "methods": [
+                    "openStartServerOnly"
+                ]
+            },
+            "open-tool-manager": {
+                "methods": [
+                    "openToolManager"
+                ]
+            },
+        "start-server": {
+            "methods": [
+                "devStartServer"
+            ]
+        },
+            "dev-start-server": {
+                "methods": [
+                    "devStartServer"
+                ]
+            },
+            "dev-get-server-status": {
+                "methods": [
+                    "devGetServerStatus"
+                ]
+            },
+            "dev-stop-server": {
+                "methods": [
+                    "devStopServer"
+                ]
+            },
+            "dev-update-auto-start": {
+                "methods": [
+                    "devUpdateAutoStart"
+                ]
+            },
+            "dev-get-registered-tools": {
+                "methods": [
+                    "devGetRegisteredTools"
+                ]
+            },
+            "stop-server": {
+                "methods": [
+                    "stopServer"
+                ]
+            },
+            "get-server-status": {
+                "methods": [
+                    "getServerStatus"
+                ]
+            },
+            "update-settings": {
+                "methods": [
+                    "updateSettings"
+                ]
+            },
+            "getToolsList": {
+                "methods": [
+                    "getToolsList"
+                ]
+            },
+            "get-server-settings": {
+                "methods": [
+                    "getServerSettings"
+                ]
+            },
+            "getToolManagerState": {
+                "methods": [
+                    "getToolManagerState"
+                ]
+            },
+            "createToolConfiguration": {
+                "methods": [
+                    "createToolConfiguration"
+                ]
+            },
+            "updateToolConfiguration": {
+                "methods": [
+                    "updateToolConfiguration"
+                ]
+            },
+            "deleteToolConfiguration": {
+                "methods": [
+                    "deleteToolConfiguration"
+                ]
+            },
+            "setCurrentToolConfiguration": {
+                "methods": [
+                    "setCurrentToolConfiguration"
+                ]
+            },
+            "updateToolStatus": {
+                "methods": [
+                    "updateToolStatus"
+                ]
+            },
+            "updateToolStatusBatch": {
+                "methods": [
+                    "updateToolStatusBatch"
+                ]
+            },
+            "exportToolConfiguration": {
+                "methods": [
+                    "exportToolConfiguration"
+                ]
+            },
+            "importToolConfiguration": {
+                "methods": [
+                    "importToolConfiguration"
+                ]
+            },
+            "getEnabledTools": {
+                "methods": [
+                    "getEnabledTools"
+                ]
+            },
+            "get-config-status": {
+                "methods": [
+                    "getConfigStatus"
+                ]
+            },
+            "generate-cli-commands": {
+                "methods": [
+                    "generateCLICommands"
+                ]
+            },
+            "generate-client-config": {
+                "methods": [
+                    "generateClientConfig"
+                ]
+            },
+            "add-to-client": {
+                "methods": [
+                    "addToClient"
+                ]
+            },
+            "remove-from-client": {
+                "methods": [
+                    "removeFromClient"
+                ]
+            },
+            "add-to-all-clients": {
+                "methods": [
+                    "addToAllClients"
+                ]
+            },
+            "remove-from-all-clients": {
+                "methods": [
+                    "removeFromAllClients"
+                ]
+            },
+            "open-config-file": {
+                "methods": [
+                    "openConfigFile"
+                ]
+            },
+            "check-license": {
+                "methods": [
+                    "checkLicense"
+                ]
+            },
+            "activate-license": {
+                "methods": [
+                    "activateLicense"
+                ]
+            },
+            "deactivate-license": {
+                "methods": [
+                    "deactivateLicense"
+                ]
+            },
+            "get-license-info": {
+                "methods": [
+                    "getLicenseInfo"
+                ]
+            },
+            "check-update": {
+                "methods": [
+                    "checkUpdate"
+                ]
+            },
+            "skip-update": {
+                "methods": [
+                    "skipUpdate"
+                ]
+            },
+            "get-machine-id": {
+                "methods": [
+                    "getMachineId"
+                ]
+            },
+            "preview-play": {
+                "methods": [
+                    "default.onPreviewPlay"
+                ]
+            },
+            "preview-stop": {
+                "methods": [
+                    "default.onPreviewStop"
+                ]
+            },
+            "device-removed": {
+                "methods": [
+                    "default.device-removed"
+                ]
+            }
+        },
+        "scene": {
+            "script": "./dist/scene.js",
+            "methods": [
+                "createNewScene",
+                "addComponentToNode",
+                "removeComponentFromNode",
+                "getNodeInfo",
+                "getAllNodes",
+                "findNodeByName",
+                "setNodeProperty",
+                "setComponentProperty",
+                "getCurrentSceneInfo",
+                "getSceneHierarchy",
+                "createPrefabFromNode"
+            ]
+        }
+    }
+}
