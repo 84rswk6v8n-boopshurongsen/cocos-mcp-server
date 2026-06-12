@@ -1,7 +1,7 @@
 'use strict';
 
 (function () {
-    const VERSION = '0.1.1';
+    const VERSION = '0.1.2';
     const currentScript = document.currentScript;
     const scriptUrl = currentScript && currentScript.src ? currentScript.src : '';
     const baseUrl = scriptUrl ? scriptUrl.replace(/\/runtime\/bridge\.js(?:\?.*)?$/, '') : 'http://127.0.0.1:3300';
@@ -21,29 +21,104 @@
     }
 
     function getCc() {
-        return window.cc || globalThis.cc || null;
+        return window.cc || globalThis.cc || window._cclegacy || globalThis._cclegacy || null;
+    }
+
+    function getDirector(cc) {
+        return cc && (cc.director || cc.Director && cc.Director.instance) || null;
+    }
+
+    function getNodeName(node) {
+        return String(node && (node.name || node._name) || '');
+    }
+
+    function getNodeChildren(node) {
+        return Array.isArray(node && node.children)
+            ? node.children
+            : Array.isArray(node && node._children)
+                ? node._children
+                : [];
+    }
+
+    function isNodeActive(node) {
+        return node && typeof node.active === 'boolean' ? node.active : true;
+    }
+
+    function looksLikeScene(value) {
+        return !!(value
+            && typeof value === 'object'
+            && (Array.isArray(value.children) || Array.isArray(value._children))
+            && (typeof value.name === 'string' || typeof value._name === 'string' || value.isValid !== undefined));
+    }
+
+    function getSceneInfo() {
+        const cc = getCc();
+        const director = getDirector(cc);
+        const candidates = [];
+        try {
+            if (director && typeof director.getScene === 'function') {
+                candidates.push({ source: 'director.getScene()', scene: director.getScene() });
+            }
+        } catch (_) {
+        }
+        for (const key of ['_scene', 'scene', '_runningScene', '_currentScene', '_sceneAsset']) {
+            try {
+                if (director && director[key]) {
+                    candidates.push({ source: `director.${key}`, scene: director[key] });
+                }
+            } catch (_) {
+            }
+        }
+        try {
+            if (cc && cc.game && cc.game._scene) {
+                candidates.push({ source: 'cc.game._scene', scene: cc.game._scene });
+            }
+        } catch (_) {
+        }
+        for (const item of candidates) {
+            if (looksLikeScene(item.scene)) {
+                return item;
+            }
+        }
+        return candidates.find((item) => item.scene) || { source: '', scene: null };
     }
 
     function getScene() {
-        const cc = getCc();
+        return getSceneInfo().scene;
+    }
+
+    function getSceneSource() {
+        return getSceneInfo().source || '';
+    }
+
+    function getRuntimeDiagnostics(cc, scene) {
+        const director = getDirector(cc);
+        const keys = [];
         try {
-            return cc && cc.director && typeof cc.director.getScene === 'function'
-                ? cc.director.getScene()
-                : null;
+            if (director) {
+                for (const key of Object.keys(director).slice(0, 40)) {
+                    keys.push(key);
+                }
+            }
         } catch (_) {
-            return null;
         }
+        return {
+            ccGlobal: window.cc ? 'window.cc' : window._cclegacy ? 'window._cclegacy' : '',
+            sceneSource: getSceneSource(),
+            sceneType: scene && scene.constructor && (scene.constructor.__classname__ || scene.constructor.name) || '',
+            directorKeys: keys
+        };
     }
 
     function getSceneName(scene) {
-        return scene && scene.name || document.title || location.pathname || 'Scene';
+        return getNodeName(scene) || document.title || location.pathname || 'Scene';
     }
 
     function isRuntimeReady(options) {
         const cc = getCc();
         const scene = getScene();
         const requireNodes = !(options && options.requireNodes === false);
-        return !!(cc && cc.director && scene && (!requireNodes || getChildren(scene).length > 0));
+        return !!(cc && getDirector(cc) && scene && (!requireNodes || getChildren(scene).length > 0));
     }
 
     function getNodeUuid(node) {
@@ -116,7 +191,7 @@
     }
 
     function getChildren(node) {
-        return Array.isArray(node && node.children) ? node.children : [];
+        return getNodeChildren(node);
     }
 
     function getComponents(node) {
@@ -137,9 +212,9 @@
 
     function nodeSummary(node, path) {
         return {
-            name: String(node && node.name || ''),
+            name: getNodeName(node),
             uuid: getNodeUuid(node),
-            active: node && typeof node.active === 'boolean' ? node.active : true,
+            active: isNodeActive(node),
             path,
             position: readPosition(node),
             rotation: readRotation(node),
@@ -154,7 +229,8 @@
         }
         visitor(root, path);
         for (const child of getChildren(root)) {
-            const childPath = path ? `${path}/${child.name || ''}` : String(child.name || '');
+            const childName = getNodeName(child);
+            const childPath = path ? `${path}/${childName}` : childName;
             walkNodes(child, visitor, childPath);
         }
     }
@@ -163,9 +239,9 @@
         const maxDepth = Number.isFinite(Number(options.maxDepth)) ? Number(options.maxDepth) : 99;
         const keyword = String(options.nameKeyword || '').trim().toLowerCase();
         const current = {
-            name: String(node && node.name || ''),
+            name: getNodeName(node),
             uuid: getNodeUuid(node),
-            active: node && typeof node.active === 'boolean' ? node.active : true,
+            active: isNodeActive(node),
             path,
             children: []
         };
@@ -173,7 +249,8 @@
             return current;
         }
         for (const child of getChildren(node)) {
-            const childPath = path ? `${path}/${child.name || ''}` : String(child.name || '');
+            const childName = getNodeName(child);
+            const childPath = path ? `${path}/${childName}` : childName;
             const childTree = buildSceneTree(child, childPath, options, depth + 1);
             if (!keyword || childTree.name.toLowerCase().includes(keyword) || childTree.path.toLowerCase().includes(keyword) || childTree.children.length) {
                 current.children.push(childTree);
@@ -189,7 +266,7 @@
             return nodes;
         }
         for (const child of getChildren(scene)) {
-            walkNodes(child, (node, path) => nodes.push({ node, path }), String(child.name || ''));
+            walkNodes(child, (node, path) => nodes.push({ node, path }), getNodeName(child));
         }
         return nodes;
     }
@@ -202,7 +279,7 @@
         const nodes = collectNodes();
         return nodes.find((item) => getNodeUuid(item.node) === query)
             || nodes.find((item) => item.path === query)
-            || nodes.find((item) => item.node && item.node.name === query)
+            || nodes.find((item) => item.node && getNodeName(item.node) === query)
             || null;
     }
 
@@ -213,11 +290,11 @@
         if (!query) {
             return [];
         }
-        const exact = nodes.filter((item) => getNodeUuid(item.node) === query || item.path === query || item.node.name === query);
+        const exact = nodes.filter((item) => getNodeUuid(item.node) === query || item.path === query || getNodeName(item.node) === query);
         const source = exact.length ? exact : nodes.filter((item) => {
             return getNodeUuid(item.node).toLowerCase().includes(lower)
                 || item.path.toLowerCase().includes(lower)
-                || String(item.node.name || '').toLowerCase().includes(lower);
+                || getNodeName(item.node).toLowerCase().includes(lower);
         });
         return source.map((item) => {
             const summary = nodeSummary(item.node, item.path);
@@ -394,7 +471,7 @@
         const componentTypes = {};
         for (const item of collectNodes()) {
             nodeCount++;
-            if (item.node && item.node.active) {
+            if (item.node && isNodeActive(item.node)) {
                 activeNodeCount++;
             }
             for (const component of getComponents(item.node)) {
@@ -405,7 +482,7 @@
         }
         return {
             sceneName: getSceneName(scene),
-            sceneIncluded: false,
+            sceneIncluded: !!scene,
             sceneRootCount,
             nodeCount,
             activeNodeCount,
@@ -419,18 +496,20 @@
 
     function checkSupport() {
         const cc = getCc();
+        const director = getDirector(cc);
         const scene = getScene();
         const childCount = scene ? getChildren(scene).length : 0;
         return {
             support: !!cc,
             hasCc: !!cc,
-            hasDirector: !!(cc && cc.director),
+            hasDirector: !!director,
             ready: isRuntimeReady({ requireNodes: false }),
             hasScene: !!scene,
             sceneName: getSceneName(scene),
             sceneChildCount: childCount,
             url: location.href,
-            bridgeVersion: VERSION
+            bridgeVersion: VERSION,
+            diagnostics: getRuntimeDiagnostics(cc, scene)
         };
     }
 
@@ -493,7 +572,7 @@
                     path: '',
                     sceneIncluded: true,
                     nodeCountExcludingScene: collectNodes().length,
-                    children: getChildren(scene).map((child) => buildSceneTree(child, String(child.name || ''), args, 0))
+                    children: getChildren(scene).map((child) => buildSceneTree(child, getNodeName(child), args, 0))
                 };
                 return { success: true, data: root };
             }

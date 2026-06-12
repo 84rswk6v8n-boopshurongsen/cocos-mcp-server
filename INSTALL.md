@@ -1,4 +1,4 @@
-# Cocos Creator MCP Server v1.7.5
+# Cocos Creator MCP Server v1.7.6
 
 ## 安装说明
 
@@ -40,5 +40,5 @@
 - 🛒 购买/续费: https://www.vberai.com/game-engines/cocos
 
 ---
-构建信息: v1.7.5 (production) - 2026-04-15 15:02:19
+构建信息: v1.7.6 (production) - 2026-06-12 14:30:00
 作者: 李大仙 (LiDaxian)

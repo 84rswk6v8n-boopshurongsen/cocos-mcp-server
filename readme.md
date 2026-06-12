@@ -54,6 +54,15 @@ Cocos MCP Server 是一个面向 Cocos Creator 3.7+ / 3.8.x 的 MCP 插件，让
 - 检查断裂资源引用可用 `scene.validate_scene`，做布局和层级深度检查可用 `validate`。
 - 不熟悉某个工具 action 时，可先用 `knowledge` 查询 `tool_guide`。
 
+## v1.7.6 更新内容
+
+- 新增 Cocos Web 运行态桥接能力，支持通过浏览器预览页读取运行时场景树、节点、组件和基础统计信息。
+- 新增 `cocos_runtime` 工具，支持检查运行态连接、等待场景就绪、查找节点、读取节点信息、读取组件信息、切换节点显隐和修改 Transform。
+- 新增运行态代理注入页，可通过 `injectedPreviewUrl` 自动注入 runtime bridge，减少手动在浏览器控制台执行脚本的步骤。
+- 优化 runtime bridge 客户端管理，清理旧客户端并拒绝过旧 bridge 版本，避免旧页面干扰 active client 选择。
+- 修复预览代理下场景 JSON、socket.io、WASM 和 engine external 资源转发问题，提升 Cocos 预览页运行态读取稳定性。
+- 优化启动 MCP 服务器面板，支持端口配置、启动/停止、重启 Cocos 后自动启动、工具列表查看、MCP 地址获取、插件重新加载和版本信息展示。
+
 ## 联系
 
 如需支持或定制，可联系：

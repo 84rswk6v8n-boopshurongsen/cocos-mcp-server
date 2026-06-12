@@ -2,7 +2,7 @@
     "$schema": "./@types/schema/package/index.json",
     "package_version": 2,
     "name": "cocos-mcp-server",
-    "version": "1.7.5",
+    "version": "1.7.6",
     "author": "舒荣森",
     "editor": ">=3.7.0",
     "description": "i18n:cocos-mcp-server.description",

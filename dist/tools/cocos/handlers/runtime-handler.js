@@ -2,6 +2,8 @@
 
 const ACTIONS = [
     'get_injection_code',
+    'get_injected_preview_url',
+    'clear_clients',
     'check_support',
     'wait_until_ready',
     'get_scene_tree',
@@ -20,7 +22,7 @@ class RuntimeHandler {
             description: [
                 'Cocos Web 运行态桥接工具，用于读取浏览器预览页中的运行时场景、节点、组件和基础统计。',
                 '使用前需要在预览网页注入 /runtime/bridge.js；本工具只返回精简 JSON，不提供网页 UI。',
-                'Actions: get_injection_code, check_support, wait_until_ready, get_scene_tree, find_node, get_node_info, get_component_info, set_node_active, set_node_transform, get_runtime_stats.'
+                'Actions: get_injection_code, get_injected_preview_url, clear_clients, check_support, wait_until_ready, get_scene_tree, find_node, get_node_info, get_component_info, set_node_active, set_node_transform, get_runtime_stats.'
             ].join('\n'),
             inputSchema: {
                 type: 'object',
@@ -37,6 +39,18 @@ class RuntimeHandler {
                     port: {
                         type: 'number',
                         description: 'get_injection_code 使用的 MCP 端口，默认当前 MCP 服务端口'
+                    },
+                    previewUrl: {
+                        type: 'string',
+                        description: '要自动注入 bridge 的 Cocos 预览页地址，例如 http://127.0.0.1:7456/'
+                    },
+                    previewHost: {
+                        type: 'string',
+                        description: '预览页主机，未提供 previewUrl 时使用，默认 127.0.0.1'
+                    },
+                    previewPort: {
+                        type: 'number',
+                        description: '预览页端口，未提供 previewUrl 时使用，默认 7456'
                     },
                     node: {
                         type: 'string',
@@ -123,6 +137,22 @@ class RuntimeHandler {
                 : {
                     success: false,
                     error: '当前 MCP 服务器不支持生成注入脚本。'
+                };
+        }
+
+        if (action === 'get_injected_preview_url') {
+            return typeof manager.getInjectedPreviewUrl === 'function'
+                ? {
+                    success: true,
+                    data: {
+                        injectedPreviewUrl: manager.getInjectedPreviewUrl(args),
+                        previewUrl: manager.getDefaultPreviewUrl(args),
+                        message: '请打开 injectedPreviewUrl，MCP 会代理 Cocos 预览页并自动注入 runtime bridge。'
+                    }
+                }
+                : {
+                    success: false,
+                    error: '当前 MCP 服务器不支持生成自动注入预览地址。'
                 };
         }
 
