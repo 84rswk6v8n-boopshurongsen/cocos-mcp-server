@@ -115,6 +115,11 @@
                     "devReloadPlugin"
                 ]
             },
+            "dev-configure-codex": {
+                "methods": [
+                    "devConfigureCodex"
+                ]
+            },
             "stop-server": {
                 "methods": [
                     "stopServer"

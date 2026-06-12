@@ -579,7 +579,7 @@ function simplifyRegisteredTools(tools) {
 }
 
 function collectToolsFromRegistry() {
-    const { CocosTools } = require('./tools/cocos/cocos-tools');
+    const { CocosTools } = require('./tools/cocos/cocos-tools-unified');
     const cocosTools = withQuietToolLogs(() => new CocosTools());
     const tools = withQuietToolLogs(() => cocosTools.getTools());
 

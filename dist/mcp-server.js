@@ -9,9 +9,12 @@ const fs = require("fs");
 const net = require("net");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
-const { CocosTools } = require("./tools/cocos/cocos-tools");
+const { CocosTools } = require("./tools/cocos/cocos-tools-unified");
+const { EXTENDED_TOOL_NAMES } = require("./tools/cocos/extended-tools-registry");
 const { isAuthDisabled, getAuthConfig } = require("./auth/server-config");
 const { RuntimeBridgeManager } = require("./runtime/runtime-bridge-manager");
+
+const AUTO_ENABLED_TOOL_NAMES = new Set(EXTENDED_TOOL_NAMES);
 
 class MCPServer {
     constructor(settings) {
@@ -118,7 +121,7 @@ class MCPServer {
             for (const [category, toolSet] of Object.entries(this.tools)) {
                 for (const tool of toolSet.getTools()) {
                     const toolName = `${category}_${tool.name}`;
-                    if (enabledToolNames.has(toolName)) {
+                    if (enabledToolNames.has(toolName) || AUTO_ENABLED_TOOL_NAMES.has(toolName)) {
                         this.toolsList.push({
                             name: toolName,
                             description: tool.description,
@@ -257,7 +260,7 @@ class MCPServer {
         this.setCorsHeaders(res);
 
         if (req.method === "OPTIONS") {
-            res.writeHead(204);
+            res.writeHead(204, { "Content-Type": "application/json; charset=utf-8" });
             res.end();
             return;
         }
@@ -361,7 +364,7 @@ class MCPServer {
             this.writeJson(res, 200, response);
         }
         else {
-            res.writeHead(202);
+            res.writeHead(202, { "Content-Type": "application/json; charset=utf-8" });
             res.end();
         }
     }
@@ -610,7 +613,7 @@ class MCPServer {
         }
 
         const enabledToolNames = new Set(enabledTools.map((tool) => `${tool.category}_${tool.name}`));
-        return this.toolsList.filter((tool) => enabledToolNames.has(tool.name));
+        return this.toolsList.filter((tool) => enabledToolNames.has(tool.name) || AUTO_ENABLED_TOOL_NAMES.has(tool.name));
     }
 
     async handleRuntimeRequest(req, res, pathname, requestUrl) {

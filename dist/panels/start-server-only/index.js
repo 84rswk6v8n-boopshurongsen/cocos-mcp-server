@@ -38,6 +38,9 @@ const text = {
     reloadingPlugin: '\u6b63\u5728\u91cd\u65b0\u52a0\u8f7d\u63d2\u4ef6...',
     reloadPluginSent: '\u63d2\u4ef6\u91cd\u65b0\u52a0\u8f7d\u547d\u4ee4\u5df2\u53d1\u9001\u3002',
     reloadPluginFailed: '\u91cd\u65b0\u52a0\u8f7d\u63d2\u4ef6\u5931\u8d25\u3002',
+    configuringCodex: '\u6b63\u5728\u5199\u5165 Codex MCP \u914d\u7f6e...',
+    configureCodexOk: '\u5df2\u5199\u5165 Codex MCP \u672c\u5730\u6865\u63a5\u914d\u7f6e\uff0c\u65b0\u5f00 Codex \u5bf9\u8bdd\u540e\u751f\u6548\u3002',
+    configureCodexFailed: '\u5199\u5165 Codex MCP \u914d\u7f6e\u5931\u8d25\u3002',
 };
 
 module.exports = Editor.Panel.define({
@@ -48,6 +51,7 @@ module.exports = Editor.Panel.define({
         stopMcpServer: '#stopMcpServer',
         openToolVisualizer: '#openToolVisualizer',
         reloadPlugin: '#reloadPlugin',
+        configureCodex: '#configureCodex',
         refreshStatus: '#refreshStatus',
         refreshTools: '#refreshTools',
         serverState: '#serverState',
@@ -81,6 +85,7 @@ module.exports = Editor.Panel.define({
         const stopButton = this.$.stopMcpServer;
         const openToolVisualizerButton = this.$.openToolVisualizer;
         const reloadPluginButton = this.$.reloadPlugin;
+        const configureCodexButton = this.$.configureCodex;
         const refreshButton = this.$.refreshStatus;
         const refreshToolsButton = this.$.refreshTools;
         const portControl = this.$.portControl;
@@ -205,6 +210,7 @@ module.exports = Editor.Panel.define({
             stopButton.disabled = busy;
             openToolVisualizerButton.disabled = busy;
             reloadPluginButton.disabled = busy;
+            configureCodexButton.disabled = busy;
             refreshButton.disabled = busy;
             refreshToolsButton.disabled = busy;
             if (autoStartInput) {
@@ -845,6 +851,38 @@ module.exports = Editor.Panel.define({
             }
         };
 
+        const configureCodex = async () => {
+            const port = getPreferredPort();
+            if (!port) {
+                if (portInput) {
+                    portInput.classList.add('invalid');
+                    portInput.focus();
+                }
+                setText(this.$.statusMessage, text.invalidPort);
+                return;
+            }
+
+            configureCodexButton.disabled = true;
+            setText(this.$.statusMessage, text.configuringCodex);
+
+            try {
+                const serverUrl = `http://127.0.0.1:${port}/mcp`;
+                const result = await Editor.Message.request('cocos-mcp-server', 'dev-configure-codex', {
+                    port,
+                    serverUrl,
+                });
+                if (!result || result.success === false) {
+                    setText(this.$.statusMessage, result && result.message ? result.message : text.configureCodexFailed);
+                    return;
+                }
+                setText(this.$.statusMessage, result.message || text.configureCodexOk);
+            } catch (error) {
+                setText(this.$.statusMessage, error && error.message ? error.message : text.configureCodexFailed);
+            } finally {
+                configureCodexButton.disabled = false;
+            }
+        };
+
         const openToolVisualizer = async () => {
             try {
                 await Editor.Message.request('cocos-mcp-server', 'open-tool-visualizer');
@@ -898,6 +936,7 @@ module.exports = Editor.Panel.define({
         stopButton.addEventListener('click', stopServer);
         openToolVisualizerButton.addEventListener('click', openToolVisualizer);
         reloadPluginButton.addEventListener('click', reloadPlugin);
+        configureCodexButton.addEventListener('click', configureCodex);
         this.$.mcpWechatContact.addEventListener('click', async () => {
             await copyText('13272695146');
             setText(this.$.statusMessage, text.wechatCopied);
