@@ -37,6 +37,18 @@
                 "width": 900,
                 "height": 360
             }
+        },
+        "tool-visualizer": {
+            "title": "工具运行视图",
+            "type": "dockable",
+            "main": "dist/panels/tool-visualizer",
+            "icon": "./static/icon.png",
+            "size": {
+                "min-width": 760,
+                "min-height": 420,
+                "width": 980,
+                "height": 620
+            }
         }
     },
     "contributions": {
@@ -61,6 +73,11 @@
             "open-tool-manager": {
                 "methods": [
                     "openToolManager"
+                ]
+            },
+            "open-tool-visualizer": {
+                "methods": [
+                    "openToolVisualizer"
                 ]
             },
         "start-server": {

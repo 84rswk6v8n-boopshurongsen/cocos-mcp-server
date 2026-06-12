@@ -46,6 +46,7 @@ module.exports = Editor.Panel.define({
     $: {
         startMcpServer: '#startMcpServer',
         stopMcpServer: '#stopMcpServer',
+        openToolVisualizer: '#openToolVisualizer',
         reloadPlugin: '#reloadPlugin',
         refreshStatus: '#refreshStatus',
         refreshTools: '#refreshTools',
@@ -55,7 +56,15 @@ module.exports = Editor.Panel.define({
         serverPort: '#serverPort',
         serverPortInput: '#serverPortInput',
         serverClients: '#serverClients',
+        toolExecutionCount: '#toolExecutionCount',
+        mcpRequestCount: '#mcpRequestCount',
+        serviceConnectionCount: '#serviceConnectionCount',
         serverUrl: '#serverUrl',
+        activeToolCount: '#activeToolCount',
+        visualizedToolCount: '#visualizedToolCount',
+        lastToolStatus: '#lastToolStatus',
+        activeToolsList: '#activeToolsList',
+        toolActivityGrid: '#toolActivityGrid',
         autoStartInput: '#autoStartInput',
         toolsSummary: '#toolsSummary',
         toolsList: '#toolsList',
@@ -70,6 +79,7 @@ module.exports = Editor.Panel.define({
     ready() {
         const startButton = this.$.startMcpServer;
         const stopButton = this.$.stopMcpServer;
+        const openToolVisualizerButton = this.$.openToolVisualizer;
         const reloadPluginButton = this.$.reloadPlugin;
         const refreshButton = this.$.refreshStatus;
         const refreshToolsButton = this.$.refreshTools;
@@ -80,10 +90,16 @@ module.exports = Editor.Panel.define({
         let isBusy = false;
         let portInputDirty = false;
         let activeToolItem = null;
+        let knownTools = [];
         let currentStatus = {
             running: false,
             port: '-',
             clients: '-',
+            toolExecutionCount: '-',
+            mcpRequestCount: '-',
+            serviceConnectionCount: '-',
+            activeToolCalls: [],
+            toolStats: [],
             autoStart: false,
             message: '',
         };
@@ -187,6 +203,7 @@ module.exports = Editor.Panel.define({
             isBusy = busy;
             startButton.disabled = busy;
             stopButton.disabled = busy;
+            openToolVisualizerButton.disabled = busy;
             reloadPluginButton.disabled = busy;
             refreshButton.disabled = busy;
             refreshToolsButton.disabled = busy;
@@ -200,18 +217,214 @@ module.exports = Editor.Panel.define({
             }
         };
 
+        const formatDuration = (ms) => {
+            const value = Number(ms || 0);
+            if (!Number.isFinite(value) || value <= 0) {
+                return '0.0s';
+            }
+            return `${(value / 1000).toFixed(1)}s`;
+        };
+
+        const getShortToolName = (name) => {
+            const textValue = String(name || '-');
+            const parts = textValue.split('_');
+            if (parts.length <= 1) {
+                return textValue;
+            }
+            return parts.slice(1).join('_') || textValue;
+        };
+
+        const getToolInitial = (name) => {
+            const shortName = getShortToolName(name);
+            return shortName && shortName !== '-' ? shortName.charAt(0).toUpperCase() : '?';
+        };
+
+        const buildToolStateMap = (status) => {
+            const stats = Array.isArray(status && status.toolStats) ? status.toolStats : [];
+            const activeCalls = Array.isArray(status && status.activeToolCalls) ? status.activeToolCalls : [];
+            const map = new Map();
+
+            for (const stat of stats) {
+                const name = stat && (stat.name || stat.toolName);
+                if (name) {
+                    map.set(name, { ...stat });
+                }
+            }
+
+            for (const call of activeCalls) {
+                const name = call && call.toolName;
+                if (!name) {
+                    continue;
+                }
+                const stat = map.get(name) || { name, count: 0, running: 0, lastStatus: 'idle' };
+                stat.running = Math.max(Number(stat.running || 0), 1);
+                stat.lastStatus = 'running';
+                stat.lastStartedAt = call.startedAt || stat.lastStartedAt;
+                map.set(name, stat);
+            }
+
+            return map;
+        };
+
+        const renderActiveTools = (status) => {
+            const container = this.$.activeToolsList;
+            if (!container) {
+                return;
+            }
+
+            const activeCalls = Array.isArray(status && status.activeToolCalls) ? status.activeToolCalls : [];
+            clearElement(container);
+
+            if (!activeCalls.length) {
+                const empty = document.createElement('div');
+                empty.className = 'empty-tools';
+                empty.textContent = '\u6682\u65e0\u8fd0\u884c\u4e2d\u7684\u5de5\u5177\u3002';
+                container.appendChild(empty);
+                return;
+            }
+
+            const now = Date.now();
+            for (const call of activeCalls.slice(-5).reverse()) {
+                const item = document.createElement('div');
+                item.className = 'active-tool-chip';
+
+                const name = document.createElement('div');
+                name.className = 'active-tool-name';
+                name.textContent = getShortToolName(call.toolName);
+                name.title = call.toolName || '';
+
+                const time = document.createElement('div');
+                time.className = 'active-tool-time';
+                time.textContent = formatDuration(now - Number(call.startedAt || now));
+
+                item.appendChild(name);
+                item.appendChild(time);
+                container.appendChild(item);
+            }
+        };
+
+        const renderToolActivity = (status = currentStatus) => {
+            const grid = this.$.toolActivityGrid;
+            if (!grid) {
+                return;
+            }
+
+            const stateMap = buildToolStateMap(status);
+            const names = [];
+            for (const tool of knownTools) {
+                const name = tool && (tool.name || tool.toolName);
+                if (name && !names.includes(name)) {
+                    names.push(name);
+                }
+            }
+            for (const name of stateMap.keys()) {
+                if (!names.includes(name)) {
+                    names.push(name);
+                }
+            }
+
+            clearElement(grid);
+            setText(this.$.activeToolCount, Array.isArray(status.activeToolCalls) ? status.activeToolCalls.length : 0);
+            setText(this.$.visualizedToolCount, names.length);
+
+            let latestStatus = '-';
+            let latestAt = 0;
+            for (const stat of stateMap.values()) {
+                const endedAt = Number(stat.lastEndedAt || 0);
+                const startedAt = Number(stat.lastStartedAt || 0);
+                const marker = Math.max(endedAt, startedAt);
+                if (marker >= latestAt) {
+                    latestAt = marker;
+                    latestStatus = stat.lastStatus || '-';
+                }
+            }
+            setText(this.$.lastToolStatus, latestStatus === 'success' ? '\u6210\u529f' : latestStatus === 'error' ? '\u5931\u8d25' : latestStatus === 'running' ? '\u8fd0\u884c' : '-');
+
+            if (!names.length) {
+                const empty = document.createElement('div');
+                empty.className = 'empty-tools';
+                empty.textContent = text.toolsEmpty;
+                grid.appendChild(empty);
+                renderActiveTools(status);
+                return;
+            }
+
+            names.sort((a, b) => {
+                const aStat = stateMap.get(a) || {};
+                const bStat = stateMap.get(b) || {};
+                const aRunning = Number(aStat.running || 0) > 0 ? 1 : 0;
+                const bRunning = Number(bStat.running || 0) > 0 ? 1 : 0;
+                if (aRunning !== bRunning) {
+                    return bRunning - aRunning;
+                }
+                return String(a).localeCompare(String(b));
+            });
+
+            for (const name of names) {
+                const stat = stateMap.get(name) || { name, count: 0, running: 0, lastStatus: 'idle' };
+                const running = Number(stat.running || 0) > 0;
+                const recentlyFinished = !running && stat.lastEndedAt && Date.now() - Number(stat.lastEndedAt) < 4000;
+                const statusName = running ? 'running' : recentlyFinished ? stat.lastStatus || 'idle' : 'idle';
+                const cell = document.createElement('div');
+                cell.className = `tool-workcell ${statusName}`;
+                cell.title = `${name}\ncount: ${stat.count || 0}\nstatus: ${statusName}${stat.lastError ? `\nerror: ${stat.lastError}` : ''}`;
+
+                const icon = document.createElement('div');
+                icon.className = 'tool-workcell-icon';
+                icon.textContent = running ? '>' : getToolInitial(name);
+
+                const title = document.createElement('div');
+                title.className = 'tool-workcell-name';
+                title.textContent = getShortToolName(name);
+
+                const meta = document.createElement('div');
+                meta.className = 'tool-workcell-meta';
+
+                const count = document.createElement('span');
+                count.textContent = `x${stat.count || 0}`;
+
+                const dot = document.createElement('span');
+                dot.className = 'tool-status-dot';
+
+                const duration = document.createElement('span');
+                duration.textContent = running
+                    ? formatDuration(Date.now() - Number(stat.lastStartedAt || Date.now()))
+                    : formatDuration(stat.lastDuration || 0);
+
+                meta.appendChild(count);
+                meta.appendChild(dot);
+                meta.appendChild(duration);
+                cell.appendChild(icon);
+                cell.appendChild(title);
+                cell.appendChild(meta);
+                grid.appendChild(cell);
+            }
+
+            renderActiveTools(status);
+        };
+
         const setState = (state, status) => {
             const running = state === 'running';
             const checking = state === 'checking';
             const abnormal = state === 'abnormal';
             const port = status && status.port ? status.port : '-';
             const clients = status && status.clients != null ? status.clients : '-';
+            const toolExecutionCount = status && status.toolExecutionCount != null ? status.toolExecutionCount : '-';
+            const mcpRequestCount = status && status.mcpRequestCount != null ? status.mcpRequestCount : '-';
+            const serviceConnectionCount = status && status.serviceConnectionCount != null ? status.serviceConnectionCount : '-';
+            const activeToolCalls = Array.isArray(status && status.activeToolCalls) ? status.activeToolCalls : [];
+            const toolStats = Array.isArray(status && status.toolStats) ? status.toolStats : [];
             const nextStatus = {
                 ...status,
                 state,
                 running,
                 port,
                 clients,
+                toolExecutionCount,
+                mcpRequestCount,
+                serviceConnectionCount,
+                activeToolCalls,
+                toolStats,
                 autoStart: !!(status && status.autoStart),
             };
 
@@ -223,7 +436,11 @@ module.exports = Editor.Panel.define({
             setText(this.$.serverStateText, checking ? text.checking : abnormal ? text.abnormal : running ? text.running : text.stopped);
             setText(this.$.serverPort, port);
             setText(this.$.serverClients, clients);
+            setText(this.$.toolExecutionCount, toolExecutionCount);
+            setText(this.$.mcpRequestCount, mcpRequestCount);
+            setText(this.$.serviceConnectionCount, serviceConnectionCount);
             setText(this.$.serverUrl, getServerUrl(nextStatus));
+            renderToolActivity(nextStatus);
             syncPortInput(port, running);
 
             if (autoStartInput) {
@@ -248,6 +465,11 @@ module.exports = Editor.Panel.define({
                     running: false,
                     port: result && result.port ? result.port : currentStatus.port,
                     clients: '-',
+                    toolExecutionCount: currentStatus.toolExecutionCount,
+                    mcpRequestCount: currentStatus.mcpRequestCount,
+                    serviceConnectionCount: currentStatus.serviceConnectionCount,
+                    activeToolCalls: currentStatus.activeToolCalls,
+                    toolStats: currentStatus.toolStats,
                     autoStart: result && result.autoStart != null ? !!result.autoStart : currentStatus.autoStart,
                     message: result && result.message ? result.message : text.statusFailed,
                 };
@@ -258,6 +480,11 @@ module.exports = Editor.Panel.define({
                 running: !!result.running,
                 port: result.port || '-',
                 clients: result.clients != null ? result.clients : 0,
+                toolExecutionCount: result.toolExecutionCount != null ? result.toolExecutionCount : 0,
+                mcpRequestCount: result.mcpRequestCount != null ? result.mcpRequestCount : 0,
+                serviceConnectionCount: result.serviceConnectionCount != null ? result.serviceConnectionCount : 0,
+                activeToolCalls: Array.isArray(result.activeToolCalls) ? result.activeToolCalls : [],
+                toolStats: Array.isArray(result.toolStats) ? result.toolStats : [],
                 autoStart: !!result.autoStart,
                 message: result.message || '',
             };
@@ -407,6 +634,11 @@ module.exports = Editor.Panel.define({
             const tools = result && Array.isArray(result.tools) ? result.tools : [];
             const skills = result && Array.isArray(result.skills) ? result.skills : [];
             const source = result && result.source ? result.source : 'MCP';
+            knownTools = tools.map((tool) => ({
+                name: tool.name || tool.toolName || '-',
+                description: tool.description || ''
+            }));
+            renderToolActivity(currentStatus);
 
             setText(this.$.toolsSummary, `${source}\uff1a\u5de5\u5177 ${tools.length} \u4e2a\uff0cSkill ${skills.length} \u4e2a`);
             clearElement(this.$.toolsList);
@@ -458,6 +690,8 @@ module.exports = Editor.Panel.define({
 
         const renderEmptyTools = () => {
             hideToolTooltip();
+            knownTools = [];
+            renderToolActivity(currentStatus);
             clearElement(this.$.toolsList);
             const empty = document.createElement('div');
             empty.className = 'empty-tools';
@@ -611,6 +845,14 @@ module.exports = Editor.Panel.define({
             }
         };
 
+        const openToolVisualizer = async () => {
+            try {
+                await Editor.Message.request('cocos-mcp-server', 'open-tool-visualizer');
+            } catch (error) {
+                setText(this.$.statusMessage, error && error.message ? error.message : '打开工具运行视图失败。');
+            }
+        };
+
         if (portInput) {
             portInput.addEventListener('input', () => {
                 portInputDirty = true;
@@ -654,6 +896,7 @@ module.exports = Editor.Panel.define({
         });
 
         stopButton.addEventListener('click', stopServer);
+        openToolVisualizerButton.addEventListener('click', openToolVisualizer);
         reloadPluginButton.addEventListener('click', reloadPlugin);
         this.$.mcpWechatContact.addEventListener('click', async () => {
             await copyText('13272695146');

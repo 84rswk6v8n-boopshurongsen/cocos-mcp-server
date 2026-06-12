@@ -10,6 +10,17 @@ if (exports.default && exports.default.methods) {
     exports.default.methods.openStartServerOnly = openStartServerOnlyPanel;
 }
 
+function openToolVisualizerPanel() {
+    return Editor.Panel.open('cocos-mcp-server.tool-visualizer');
+}
+
+exports.openToolVisualizer = openToolVisualizerPanel;
+exports.methods = exports.methods || {};
+exports.methods.openToolVisualizer = openToolVisualizerPanel;
+if (exports.default && exports.default.methods) {
+    exports.default.methods.openToolVisualizer = openToolVisualizerPanel;
+}
+
 async function devStartServer() {
     try {
         const { MCPServer } = require('./mcp-server');
@@ -415,6 +426,11 @@ function getPanelServerStatus(extra = {}) {
         running: !!status.running,
         port,
         clients: status.clients != null ? status.clients : 0,
+        toolExecutionCount: status.toolExecutionCount != null ? status.toolExecutionCount : 0,
+        mcpRequestCount: status.mcpRequestCount != null ? status.mcpRequestCount : 0,
+        serviceConnectionCount: status.serviceConnectionCount != null ? status.serviceConnectionCount : 0,
+        activeToolCalls: Array.isArray(status.activeToolCalls) ? status.activeToolCalls : [],
+        toolStats: Array.isArray(status.toolStats) ? status.toolStats : [],
         autoStart: !!settings.autoStart,
         message: status.running ? 'MCP 服务器正在运行。' : 'MCP 服务器已停止。',
         ...extra,
@@ -456,6 +472,11 @@ async function stopPanelMcpServer() {
             running: false,
             port,
             clients: 0,
+            toolExecutionCount: 0,
+            mcpRequestCount: 0,
+            serviceConnectionCount: 0,
+            activeToolCalls: [],
+            toolStats: [],
             autoStart: !!settings.autoStart,
             message: 'MCP 服务器已停止。',
         };
@@ -498,6 +519,11 @@ function updatePanelAutoStart(options = {}) {
             running: !!status.running,
             port: status.port || settings.port,
             clients: status.clients != null ? status.clients : 0,
+            toolExecutionCount: status.toolExecutionCount != null ? status.toolExecutionCount : 0,
+            mcpRequestCount: status.mcpRequestCount != null ? status.mcpRequestCount : 0,
+            serviceConnectionCount: status.serviceConnectionCount != null ? status.serviceConnectionCount : 0,
+            activeToolCalls: Array.isArray(status.activeToolCalls) ? status.activeToolCalls : [],
+            toolStats: Array.isArray(status.toolStats) ? status.toolStats : [],
             autoStart: !!settings.autoStart,
             message: '自动启动设置已保存。',
         };

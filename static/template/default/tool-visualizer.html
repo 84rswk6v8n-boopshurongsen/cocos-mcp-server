@@ -1,0 +1,466 @@
+<style>
+    .tool-visualizer-page {
+        height: 100%;
+        min-height: 360px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        padding: 16px;
+        box-sizing: border-box;
+        background: var(--color-normal-fill, #1f1f1f);
+        color: var(--color-normal-contrast, #ddd);
+        font-size: 13px;
+    }
+
+    .visualizer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .visualizer-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #f3f4f6;
+    }
+
+    .visualizer-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .visualizer-button {
+        height: 28px;
+        padding: 0 12px;
+        border: 1px solid var(--color-normal-border, #4b5563);
+        background: transparent;
+        color: #d1d5db;
+        cursor: pointer;
+        font-size: 12px;
+    }
+
+    .visualizer-button:hover {
+        border-color: #3d7eff;
+        color: #f3f4f6;
+    }
+
+    .visualizer-button:disabled {
+        opacity: 0.6;
+        cursor: default;
+    }
+
+    .activity-summary {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+    }
+
+    .activity-metric {
+        border: 1px solid var(--color-normal-border, #343434);
+        background: rgba(0, 0, 0, 0.16);
+        padding: 10px 12px;
+        min-width: 0;
+    }
+
+    .activity-metric-value {
+        color: #f3f4f6;
+        font-size: 20px;
+        font-weight: 600;
+        line-height: 1.2;
+    }
+
+    .activity-metric-label {
+        color: #9ca3af;
+        font-size: 12px;
+        margin-top: 4px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .visualizer-body {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: minmax(150px, 0.36fr) minmax(260px, 0.64fr);
+        gap: 14px;
+    }
+
+    .active-panel,
+    .grid-panel {
+        min-width: 0;
+        min-height: 0;
+        border: 1px solid var(--color-normal-border, #3a3a3a);
+        background: var(--color-normal-fill-emphasis, #252525);
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .active-panel {
+        background:
+            linear-gradient(180deg, rgba(61, 126, 255, 0.08), rgba(0, 0, 0, 0.08)),
+            var(--color-normal-fill-emphasis, #252525);
+    }
+
+    .grid-panel {
+        background:
+            linear-gradient(180deg, rgba(34, 197, 94, 0.06), rgba(0, 0, 0, 0.08)),
+            var(--color-normal-fill-emphasis, #252525);
+    }
+
+    .section-title {
+        color: #f3f4f6;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 10px;
+    }
+
+    .active-tools {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 8px;
+        align-content: start;
+    }
+
+    .active-tool-chip {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+        border: 1px solid rgba(61, 126, 255, 0.5);
+        background: rgba(61, 126, 255, 0.12);
+        color: #dbeafe;
+        padding: 8px;
+        font-size: 12px;
+    }
+
+    .office-computer {
+        width: 30px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #111827;
+        border: 1px solid rgba(147, 197, 253, 0.45);
+        font-size: 18px;
+        animation: computerWork 1.1s ease-in-out infinite;
+    }
+
+    .office-tool-info {
+        min-width: 0;
+    }
+
+    .active-tool-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .active-tool-state {
+        color: #93c5fd;
+        font-size: 11px;
+        margin-top: 3px;
+    }
+
+    .active-tool-time {
+        color: #93c5fd;
+        white-space: nowrap;
+    }
+
+    .tool-activity-grid {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(142px, 1fr));
+        grid-auto-rows: minmax(112px, auto);
+        gap: 10px;
+        padding-right: 2px;
+    }
+
+    .tool-workcell {
+        position: relative;
+        min-width: 0;
+        border: 1px solid var(--color-normal-border, #343434);
+        background: rgba(0, 0, 0, 0.14);
+        padding: 10px;
+        overflow: hidden;
+    }
+
+    .tool-workcell.running {
+        border-color: #3d7eff;
+        background: rgba(61, 126, 255, 0.14);
+        animation: toolWorkPulse 0.9s ease-in-out infinite;
+    }
+
+    .tool-workcell.success {
+        border-color: rgba(34, 197, 94, 0.8);
+        animation: toolDoneFlash 1.2s ease-out;
+    }
+
+    .tool-workcell.error {
+        border-color: rgba(239, 68, 68, 0.85);
+        background: rgba(239, 68, 68, 0.1);
+        animation: toolErrorFlash 1.2s ease-out;
+    }
+
+    .tool-home-label {
+        color: #9ca3af;
+        font-size: 10px;
+        margin-bottom: 8px;
+    }
+
+    .resident-avatar {
+        position: relative;
+        width: 30px;
+        height: 30px;
+        border: 1px solid #4b5563;
+        background: #111827;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        margin-bottom: 8px;
+        overflow: hidden;
+    }
+
+    .tool-workcell.running .resident-avatar {
+        border-color: #3d7eff;
+        animation: leaveHome 1.15s ease-in-out infinite;
+    }
+
+    .tool-workcell.success .resident-avatar,
+    .tool-workcell.error .resident-avatar {
+        animation: returnHome 1.15s ease-out;
+    }
+
+    .emoji-step {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .emoji-run {
+        opacity: 0;
+    }
+
+    .tool-workcell.running .emoji-walk {
+        animation: walkFrame 0.55s steps(1, end) infinite;
+    }
+
+    .tool-workcell.running .emoji-run {
+        animation: runFrame 0.55s steps(1, end) infinite;
+    }
+
+    .tool-workcell-name {
+        color: #f3f4f6;
+        font-size: 12px;
+        line-height: 1.3;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .tool-workcell-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        margin-top: 9px;
+        color: #9ca3af;
+        font-size: 11px;
+    }
+
+    .tool-status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #6b7280;
+        flex: 0 0 auto;
+    }
+
+    .tool-workcell.running .tool-status-dot {
+        background: #3b82f6;
+        box-shadow: 0 0 8px rgba(59, 130, 246, 0.6);
+    }
+
+    .tool-workcell.success .tool-status-dot {
+        background: #22c55e;
+    }
+
+    .tool-workcell.error .tool-status-dot {
+        background: #ef4444;
+    }
+
+    .status-message,
+    .empty-tools {
+        color: #9ca3af;
+        font-size: 12px;
+    }
+
+    @keyframes toolWorkPulse {
+        0%, 100% {
+            transform: translateY(0);
+            box-shadow: 0 0 0 rgba(61, 126, 255, 0);
+        }
+        50% {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 18px rgba(61, 126, 255, 0.16);
+        }
+    }
+
+    @keyframes toolIconWork {
+        0%, 100% {
+            transform: translateX(0) rotate(0deg);
+        }
+        50% {
+            transform: translateX(3px) rotate(8deg);
+        }
+    }
+
+    @keyframes computerWork {
+        0%, 100% {
+            transform: translateY(0);
+            filter: brightness(1);
+        }
+        50% {
+            transform: translateY(-1px);
+            filter: brightness(1.25);
+        }
+    }
+
+    @keyframes leaveHome {
+        0% {
+            transform: translate(0, 0);
+            opacity: 1;
+        }
+        60% {
+            transform: translate(34px, -18px);
+            opacity: 1;
+        }
+        100% {
+            transform: translate(56px, -28px);
+            opacity: 0;
+        }
+    }
+
+    @keyframes returnHome {
+        0% {
+            transform: translate(56px, -28px);
+            opacity: 0;
+        }
+        40% {
+            transform: translate(24px, -12px);
+            opacity: 1;
+        }
+        100% {
+            transform: translate(0, 0);
+            opacity: 1;
+        }
+    }
+
+    @keyframes walkFrame {
+        0%, 49% {
+            opacity: 1;
+        }
+        50%, 100% {
+            opacity: 0;
+        }
+    }
+
+    @keyframes runFrame {
+        0%, 49% {
+            opacity: 0;
+        }
+        50%, 100% {
+            opacity: 1;
+        }
+    }
+
+    @keyframes toolDoneFlash {
+        0% {
+            box-shadow: 0 0 0 rgba(34, 197, 94, 0);
+        }
+        35% {
+            box-shadow: 0 0 16px rgba(34, 197, 94, 0.28);
+        }
+        100% {
+            box-shadow: 0 0 0 rgba(34, 197, 94, 0);
+        }
+    }
+
+    @keyframes toolErrorFlash {
+        0% {
+            box-shadow: 0 0 0 rgba(239, 68, 68, 0);
+        }
+        35% {
+            box-shadow: 0 0 16px rgba(239, 68, 68, 0.3);
+        }
+        100% {
+            box-shadow: 0 0 0 rgba(239, 68, 68, 0);
+        }
+    }
+
+    @media (max-width: 760px) {
+        .activity-summary {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+<div class="tool-visualizer-page">
+    <div class="visualizer-header">
+        <div>
+            <div class="visualizer-title">工具运行视图</div>
+            <div id="statusMessage" class="status-message">正在读取工具状态...</div>
+        </div>
+        <div class="visualizer-actions">
+            <button id="refreshStatus" class="visualizer-button">刷新状态</button>
+            <button id="refreshTools" class="visualizer-button">刷新工具</button>
+        </div>
+    </div>
+
+    <div class="activity-summary">
+        <div class="activity-metric">
+            <div id="activeToolCount" class="activity-metric-value">0</div>
+            <div class="activity-metric-label">运行中</div>
+        </div>
+        <div class="activity-metric">
+            <div id="visualizedToolCount" class="activity-metric-value">0</div>
+            <div class="activity-metric-label">可视化工具</div>
+        </div>
+        <div class="activity-metric">
+            <div id="toolExecutionCount" class="activity-metric-value">0</div>
+            <div class="activity-metric-label">工具执行次数</div>
+        </div>
+        <div class="activity-metric">
+            <div id="lastToolStatus" class="activity-metric-value">-</div>
+            <div class="activity-metric-label">最近状态</div>
+        </div>
+    </div>
+
+    <div class="visualizer-body">
+        <div class="active-panel">
+            <div class="section-title">办公区</div>
+            <div id="activeToolsList" class="active-tools">
+                <div class="empty-tools">暂无正在办公的工具。</div>
+            </div>
+        </div>
+        <div class="grid-panel">
+            <div class="section-title">居住区</div>
+            <div id="toolActivityGrid" class="tool-activity-grid">
+                <div class="empty-tools">正在读取工具状态...</div>
+            </div>
+        </div>
+    </div>
+</div>

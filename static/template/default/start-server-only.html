@@ -177,6 +177,8 @@
         margin-top: auto;
         padding-top: 16px;
         display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
         justify-content: flex-start;
     }
 
@@ -297,6 +299,212 @@
         color: #9ca3af;
         font-size: 12px;
         margin-bottom: 10px;
+    }
+
+    .activity-summary {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        margin-bottom: 10px;
+    }
+
+    .activity-metric {
+        border: 1px solid var(--color-normal-border, #343434);
+        background: rgba(0, 0, 0, 0.14);
+        padding: 7px 8px;
+        min-width: 0;
+    }
+
+    .activity-metric-value {
+        color: #f3f4f6;
+        font-size: 16px;
+        font-weight: 600;
+        line-height: 1.2;
+    }
+
+    .activity-metric-label {
+        color: #9ca3af;
+        font-size: 11px;
+        margin-top: 2px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .active-tools {
+        min-height: 34px;
+        max-height: 76px;
+        overflow: auto;
+        margin-bottom: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .active-tool-chip {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        border: 1px solid rgba(61, 126, 255, 0.5);
+        background: rgba(61, 126, 255, 0.12);
+        color: #dbeafe;
+        padding: 5px 7px;
+        font-size: 11px;
+        min-width: 0;
+    }
+
+    .active-tool-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .active-tool-time {
+        flex: 0 0 auto;
+        color: #93c5fd;
+    }
+
+    .tool-activity-grid {
+        flex: 1;
+        min-height: 120px;
+        max-height: 260px;
+        overflow: auto;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+        gap: 8px;
+        padding-right: 2px;
+    }
+
+    .tool-workcell {
+        position: relative;
+        min-width: 0;
+        min-height: 74px;
+        border: 1px solid var(--color-normal-border, #343434);
+        background: rgba(0, 0, 0, 0.14);
+        padding: 8px;
+        overflow: hidden;
+    }
+
+    .tool-workcell.running {
+        border-color: #3d7eff;
+        background: rgba(61, 126, 255, 0.14);
+        animation: toolWorkPulse 0.9s ease-in-out infinite;
+    }
+
+    .tool-workcell.success {
+        border-color: rgba(34, 197, 94, 0.8);
+        animation: toolDoneFlash 1.2s ease-out;
+    }
+
+    .tool-workcell.error {
+        border-color: rgba(239, 68, 68, 0.85);
+        background: rgba(239, 68, 68, 0.1);
+        animation: toolErrorFlash 1.2s ease-out;
+    }
+
+    .tool-workcell-icon {
+        width: 20px;
+        height: 20px;
+        border: 1px solid #4b5563;
+        background: #111827;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #9ca3af;
+        font-size: 11px;
+        margin-bottom: 7px;
+    }
+
+    .tool-workcell.running .tool-workcell-icon {
+        color: #bfdbfe;
+        border-color: #3d7eff;
+        animation: toolIconWork 0.8s ease-in-out infinite;
+    }
+
+    .tool-workcell-name {
+        color: #f3f4f6;
+        font-size: 11px;
+        line-height: 1.25;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .tool-workcell-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        margin-top: 7px;
+        color: #9ca3af;
+        font-size: 10px;
+    }
+
+    .tool-status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #6b7280;
+        flex: 0 0 auto;
+    }
+
+    .tool-workcell.running .tool-status-dot {
+        background: #3b82f6;
+        box-shadow: 0 0 8px rgba(59, 130, 246, 0.6);
+    }
+
+    .tool-workcell.success .tool-status-dot {
+        background: #22c55e;
+    }
+
+    .tool-workcell.error .tool-status-dot {
+        background: #ef4444;
+    }
+
+    @keyframes toolWorkPulse {
+        0%, 100% {
+            transform: translateY(0);
+            box-shadow: 0 0 0 rgba(61, 126, 255, 0);
+        }
+        50% {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 18px rgba(61, 126, 255, 0.16);
+        }
+    }
+
+    @keyframes toolIconWork {
+        0%, 100% {
+            transform: translateX(0) rotate(0deg);
+        }
+        50% {
+            transform: translateX(3px) rotate(8deg);
+        }
+    }
+
+    @keyframes toolDoneFlash {
+        0% {
+            box-shadow: 0 0 0 rgba(34, 197, 94, 0);
+        }
+        35% {
+            box-shadow: 0 0 16px rgba(34, 197, 94, 0.28);
+        }
+        100% {
+            box-shadow: 0 0 0 rgba(34, 197, 94, 0);
+        }
+    }
+
+    @keyframes toolErrorFlash {
+        0% {
+            box-shadow: 0 0 0 rgba(239, 68, 68, 0);
+        }
+        35% {
+            box-shadow: 0 0 16px rgba(239, 68, 68, 0.3);
+        }
+        100% {
+            box-shadow: 0 0 0 rgba(239, 68, 68, 0);
+        }
     }
 
     .tools-list {
@@ -426,6 +634,18 @@
                 <div id="serverClients" class="status-value">-</div>
             </div>
             <div class="status-row">
+                <div class="status-label">工具执行次数</div>
+                <div id="toolExecutionCount" class="status-value">-</div>
+            </div>
+            <div class="status-row">
+                <div class="status-label">MCP 请求次数</div>
+                <div id="mcpRequestCount" class="status-value">-</div>
+            </div>
+            <div class="status-row">
+                <div class="status-label">服务连接次数</div>
+                <div id="serviceConnectionCount" class="status-value">-</div>
+            </div>
+            <div class="status-row">
                 <div class="status-label">MCP 地址</div>
                 <div id="serverUrl" class="status-value">-</div>
             </div>
@@ -436,6 +656,7 @@
                 </label>
             </div>
             <div class="reload-plugin-row">
+                <button id="openToolVisualizer" class="reload-plugin-button">工具运行视图</button>
                 <button id="reloadPlugin" class="reload-plugin-button">重新加载插件</button>
             </div>
         </div>

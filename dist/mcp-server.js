@@ -7,6 +7,7 @@ const http = require("http");
 const { v4: uuidv4 } = require("uuid");
 const { CocosTools } = require("./tools/cocos/cocos-tools");
 const { isAuthDisabled, getAuthConfig } = require("./auth/server-config");
+const { RuntimeBridgeManager } = require("./runtime/runtime-bridge-manager");
 
 class MCPServer {
     constructor(settings) {
@@ -19,8 +20,16 @@ class MCPServer {
         this.isLicenseValid = null;
         this._initialProjectPath = "";
         this.actionCallCounts = new Map();
+        this.toolExecutionCount = 0;
+        this.mcpRequestCount = 0;
+        this.serviceConnectionCount = 0;
+        this.toolStats = new Map();
+        this.activeToolCalls = new Map();
+        this.toolCallSequence = 0;
         this.autoSaveTimer = null;
         this.settings = settings;
+        this.runtimeBridge = new RuntimeBridgeManager(settings);
+        globalThis.__cocosMcpRuntimeBridgeManager = this.runtimeBridge;
 
         console.log("[MCPServer] 构造参数：", settings);
         console.log("[MCPServer] 传输方式：HTTP 流式传输（MCP 2025-03-26）");
@@ -133,6 +142,56 @@ class MCPServer {
         throw new Error(`未找到工具：${toolName}`);
     }
 
+    getToolStat(toolName) {
+        const name = String(toolName || "unknown");
+        if (!this.toolStats.has(name)) {
+            this.toolStats.set(name, {
+                name,
+                count: 0,
+                running: 0,
+                lastStatus: "idle",
+                lastStartedAt: null,
+                lastEndedAt: null,
+                lastDuration: 0,
+                lastError: ""
+            });
+        }
+        return this.toolStats.get(name);
+    }
+
+    beginToolCall(toolName) {
+        const name = String(toolName || "unknown");
+        const startedAt = Date.now();
+        const id = `${startedAt}-${++this.toolCallSequence}`;
+        const stat = this.getToolStat(name);
+        this.toolExecutionCount += 1;
+        stat.count += 1;
+        stat.running += 1;
+        stat.lastStatus = "running";
+        stat.lastStartedAt = startedAt;
+        stat.lastError = "";
+        this.activeToolCalls.set(id, {
+            id,
+            toolName: name,
+            startedAt
+        });
+        return { id, toolName: name, startedAt };
+    }
+
+    finishToolCall(toolCall, error) {
+        if (!toolCall) {
+            return;
+        }
+        const stat = this.getToolStat(toolCall.toolName);
+        const endedAt = Date.now();
+        stat.running = Math.max(0, stat.running - 1);
+        stat.lastEndedAt = endedAt;
+        stat.lastDuration = endedAt - toolCall.startedAt;
+        stat.lastStatus = error ? "error" : "success";
+        stat.lastError = error && error.message ? error.message : "";
+        this.activeToolCalls.delete(toolCall.id);
+    }
+
     async autoSaveScene() {
         return this.doAutoSave();
     }
@@ -214,6 +273,8 @@ class MCPServer {
             }
 
             if (pathname === "/mcp" && req.method === "POST") {
+                this.mcpRequestCount += 1;
+                this.serviceConnectionCount += 1;
                 await this.handleMCPRequest(req, res);
                 return;
             }
@@ -223,7 +284,14 @@ class MCPServer {
                 return;
             }
 
+            if (pathname.startsWith("/runtime/")) {
+                await this.handleRuntimeRequest(req, res, pathname, requestUrl);
+                return;
+            }
+
             if (pathname.startsWith("/api/") && req.method === "POST") {
+                this.mcpRequestCount += 1;
+                this.serviceConnectionCount += 1;
                 await this.handleSimpleAPIRequest(req, res, pathname);
                 return;
             }
@@ -311,7 +379,16 @@ class MCPServer {
                     result = { tools: this.getAvailableTools() };
                     break;
                 case "tools/call": {
-                    const toolResult = await this.executeToolCall(params.name, params.arguments || {});
+                    const toolCall = this.beginToolCall(params.name);
+                    let toolResult;
+                    try {
+                        toolResult = await this.executeToolCall(params.name, params.arguments || {});
+                        this.finishToolCall(toolCall);
+                    }
+                    catch (error) {
+                        this.finishToolCall(toolCall, error);
+                        throw error;
+                    }
                     result = {
                         content: [
                             {
@@ -435,6 +512,7 @@ class MCPServer {
             response: res,
             pingTimer
         });
+        this.serviceConnectionCount += 1;
 
         if (this.settings.enableDebugLog) {
             console.log(`[MCPServer] 客户端已连接：${sessionId}`);
@@ -463,6 +541,10 @@ class MCPServer {
             this.autoSaveTimer = null;
         }
 
+        if (this.runtimeBridge) {
+            this.runtimeBridge.destroy();
+        }
+
         if (this.httpServer) {
             this.httpServer.close();
             this.httpServer = null;
@@ -485,13 +567,21 @@ class MCPServer {
         return {
             running: !!this.httpServer,
             port: this.settings.port,
-            clients: this.clients.size
+            clients: this.clients.size,
+            toolExecutionCount: this.toolExecutionCount,
+            mcpRequestCount: this.mcpRequestCount,
+            serviceConnectionCount: this.serviceConnectionCount,
+            activeToolCalls: Array.from(this.activeToolCalls.values()),
+            toolStats: Array.from(this.toolStats.values())
         };
     }
 
     updateSettings(settings) {
         const wasRunning = !!this.httpServer;
         this.settings = settings;
+        if (this.runtimeBridge && typeof this.runtimeBridge.updateSettings === "function") {
+            this.runtimeBridge.updateSettings(settings);
+        }
         if (wasRunning) {
             this.stop();
             this.start();
@@ -505,6 +595,55 @@ class MCPServer {
 
         const enabledToolNames = new Set(enabledTools.map((tool) => `${tool.category}_${tool.name}`));
         return this.toolsList.filter((tool) => enabledToolNames.has(tool.name));
+    }
+
+    async handleRuntimeRequest(req, res, pathname, requestUrl) {
+        if (pathname === "/runtime/bridge.js" && req.method === "GET") {
+            const script = this.runtimeBridge.getBridgeScript();
+            res.writeHead(200, {
+                "Content-Type": "application/javascript; charset=utf-8",
+                "Cache-Control": "no-cache"
+            });
+            res.end(script);
+            return;
+        }
+
+        if (pathname === "/runtime/status" && req.method === "GET") {
+            this.writeJson(res, 200, this.runtimeBridge.getStatus());
+            return;
+        }
+
+        if (pathname === "/runtime/register" && req.method === "POST") {
+            const body = await this.readRequestBody(req);
+            const info = body ? JSON.parse(body) : {};
+            this.writeJson(res, 200, this.runtimeBridge.register(info));
+            return;
+        }
+
+        if (pathname === "/runtime/heartbeat" && req.method === "POST") {
+            const body = await this.readRequestBody(req);
+            const payload = body ? JSON.parse(body) : {};
+            this.writeJson(res, 200, this.runtimeBridge.heartbeat(payload));
+            return;
+        }
+
+        if (pathname === "/runtime/poll" && req.method === "GET") {
+            const clientId = requestUrl.searchParams.get("clientId") || "";
+            this.runtimeBridge.handlePoll(clientId, res, this.writeJson.bind(this));
+            return;
+        }
+
+        if (pathname === "/runtime/result" && req.method === "POST") {
+            const body = await this.readRequestBody(req);
+            const payload = body ? JSON.parse(body) : {};
+            this.writeJson(res, 200, this.runtimeBridge.acceptResult(payload));
+            return;
+        }
+
+        this.writeJson(res, 404, {
+            success: false,
+            error: "未找到运行态接口。"
+        });
     }
 
     async handleSimpleAPIRequest(req, res, pathname) {
@@ -534,7 +673,16 @@ class MCPServer {
         }
 
         try {
-            const result = await this.executeToolCall(fullToolName, params);
+            const toolCall = this.beginToolCall(fullToolName);
+            let result;
+            try {
+                result = await this.executeToolCall(fullToolName, params);
+                this.finishToolCall(toolCall);
+            }
+            catch (error) {
+                this.finishToolCall(toolCall, error);
+                throw error;
+            }
             this.writeJson(res, 200, {
                 success: true,
                 tool: fullToolName,

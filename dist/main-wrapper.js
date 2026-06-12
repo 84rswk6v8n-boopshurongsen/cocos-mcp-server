@@ -9,8 +9,28 @@ function installAnimationMaskPatch(stage) {
     }
 }
 
+function installPreviewStatusPatch(stage) {
+    try {
+        require('./tools/cocos/preview-status-patch').install();
+    } catch (error) {
+        console.error(`[cocos-mcp-server] Failed to install preview status patch (${stage}):`, error);
+    }
+}
+
+function installRuntimePatch(stage) {
+    try {
+        require('./tools/cocos/runtime-patch').install();
+    } catch (error) {
+        console.error(`[cocos-mcp-server] Failed to install runtime patch (${stage}):`, error);
+    }
+}
+
 installAnimationMaskPatch('before-main');
+installPreviewStatusPatch('before-main');
+installRuntimePatch('before-main');
 const mainModule = require('./main');
 installAnimationMaskPatch('after-main');
+installPreviewStatusPatch('after-main');
+installRuntimePatch('after-main');
 
 module.exports = mainModule;
