@@ -10,7 +10,8 @@ const EXTENDED_TOOL_NAMES = [
     'cocos_animation_mask',
     'cocos_animation_graph',
     'cocos_preview',
-    'cocos_runtime'
+    'cocos_runtime',
+    'cocos_physics'
 ];
 
 function createFreshHandler(modulePath, exportName) {

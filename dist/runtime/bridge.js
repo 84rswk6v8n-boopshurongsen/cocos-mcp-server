@@ -1,7 +1,7 @@
 'use strict';
 
 (function () {
-    const VERSION = '0.1.2';
+    const VERSION = '0.1.4';
     const currentScript = document.currentScript;
     const scriptUrl = currentScript && currentScript.src ? currentScript.src : '';
     const baseUrl = scriptUrl ? scriptUrl.replace(/\/runtime\/bridge\.js(?:\?.*)?$/, '') : 'http://127.0.0.1:3300';
@@ -15,9 +15,100 @@
         lastHeartbeatAt: null,
         lastCommandAt: null
     };
+    const consoleLogs = window.__cocosMcpConsoleLogs || (window.__cocosMcpConsoleLogs = []);
+    const CONSOLE_LOG_LIMIT = 500;
 
     function sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function safeConsoleArg(value) {
+        if (value === null || value === undefined) {
+            return value;
+        }
+        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+            return value;
+        }
+        if (value instanceof Error) {
+            return {
+                name: value.name,
+                message: value.message,
+                stack: value.stack
+            };
+        }
+        try {
+            return safeValue(value, 0, new WeakSet(), { maxDepth: 1, maxArrayLength: 10 });
+        } catch (_) {
+            try {
+                return String(value);
+            } catch (error) {
+                return '[Unserializable]';
+            }
+        }
+    }
+
+    function recordConsole(level, args) {
+        const values = Array.prototype.slice.call(args || []).map(safeConsoleArg);
+        const text = values.map((item) => {
+            if (typeof item === 'string') {
+                return item;
+            }
+            try {
+                return JSON.stringify(item);
+            } catch (_) {
+                return String(item);
+            }
+        }).join(' ');
+        consoleLogs.push({
+            index: consoleLogs.length + 1,
+            level,
+            time: new Date().toISOString(),
+            text,
+            values
+        });
+        if (consoleLogs.length > CONSOLE_LOG_LIMIT) {
+            consoleLogs.splice(0, consoleLogs.length - CONSOLE_LOG_LIMIT);
+        }
+    }
+
+    function defineConsoleHidden(target, key, value) {
+        try {
+            Object.defineProperty(target, key, {
+                value,
+                enumerable: false,
+                configurable: true
+            });
+        } catch (_) {
+            try {
+                target[key] = value;
+            } catch (_) {
+            }
+        }
+    }
+
+    function installConsoleCapture() {
+        if (!window.console) {
+            return;
+        }
+        const originals = window.console.__cocosMcpOriginals || {};
+        for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
+            if (!originals[level]) {
+                originals[level] = typeof window.console[level] === 'function'
+                    ? window.console[level].bind(window.console)
+                    : function () {};
+            }
+            const original = originals[level];
+            window.console[level] = function () {
+                try {
+                    recordConsole(level, arguments);
+                } catch (_) {
+                }
+                return original.apply(null, arguments);
+            };
+        }
+        defineConsoleHidden(window.console, '__cocosMcpOriginals', originals);
+        defineConsoleHidden(window.console, '__cocosMcpCaptured', true);
+        defineConsoleHidden(window.console, '__cocosMcpCaptureVersion', VERSION);
     }
 
     function getCc() {
@@ -308,7 +399,11 @@
         });
     }
 
-    function safeValue(value, depth, seen) {
+    function safeValue(value, depth, seen, options) {
+        options = options || {};
+        const maxDepth = Number.isFinite(Number(options.maxDepth)) ? Number(options.maxDepth) : 2;
+        const maxArrayLength = Number.isFinite(Number(options.maxArrayLength)) ? Number(options.maxArrayLength) : 20;
+        const includePrivate = !!options.includePrivate;
         if (value === null || value === undefined) {
             return value;
         }
@@ -318,7 +413,7 @@
         if (typeof value === 'function') {
             return undefined;
         }
-        if (depth > 2) {
+        if (depth > maxDepth) {
             return '[Object]';
         }
         const vec = toPlainVec(value);
@@ -338,15 +433,15 @@
         }
         seen.add(value);
         if (Array.isArray(value)) {
-            return value.slice(0, 20).map((item) => safeValue(item, depth + 1, seen)).filter((item) => item !== undefined);
+            return value.slice(0, maxArrayLength).map((item) => safeValue(item, depth + 1, seen, options)).filter((item) => item !== undefined);
         }
         const result = {};
         for (const key of Object.keys(value).slice(0, 40)) {
-            if (key.startsWith('_')) {
+            if (!includePrivate && key.startsWith('_')) {
                 continue;
             }
             try {
-                const child = safeValue(value[key], depth + 1, seen);
+                const child = safeValue(value[key], depth + 1, seen, options);
                 if (child !== undefined) {
                     result[key] = child;
                 }
@@ -375,6 +470,374 @@
                 properties: safeValue(component, 0, new WeakSet())
             }
         };
+    }
+
+    function findComponent(args) {
+        const found = findNode(args.node || args.query || args.path || args.uuid);
+        if (!found) {
+            return { error: `未找到节点：${args.node || args.query || args.path || args.uuid || ''}` };
+        }
+        const componentName = String(args.component || args.componentType || '').trim();
+        const components = getComponents(found.node);
+        if (!componentName && components.length === 1) {
+            return { found, component: components[0], components };
+        }
+        const component = components.find((item) => {
+            const type = getComponentType(item);
+            const uuid = getComponentUuid(item);
+            return uuid === componentName
+                || type === componentName
+                || type.endsWith(componentName)
+                || type.split('.').pop() === componentName;
+        });
+        if (!component) {
+            return {
+                found,
+                components,
+                error: `节点 ${found.path} 上未找到组件：${componentName || '(未指定)'}。可用组件：${components.map(getComponentType).join(', ')}`
+            };
+        }
+        return { found, component, components };
+    }
+
+    function componentMatches(component, componentName) {
+        const query = String(componentName || '').trim();
+        if (!component || !query) {
+            return false;
+        }
+        const type = getComponentType(component);
+        const uuid = getComponentUuid(component);
+        const shortType = type.split('.').pop();
+        return uuid === query
+            || type === query
+            || type.endsWith(query)
+            || shortType === query;
+    }
+
+    function findNodesByComponent(args) {
+        const componentName = String(args.component || args.componentType || '').trim();
+        if (!componentName) {
+            return { success: false, error: '缺少要查询的组件名 component。' };
+        }
+        const nodes = collectNodes();
+        const matched = [];
+        for (const item of nodes) {
+            const components = getComponents(item.node).filter((component) => componentMatches(component, componentName));
+            if (!components.length) {
+                continue;
+            }
+            matched.push({
+                name: getNodeName(item.node),
+                uuid: getNodeUuid(item.node),
+                path: item.path,
+                active: isNodeActive(item.node),
+                components: components.map(componentSummary)
+            });
+        }
+        return {
+            success: true,
+            data: {
+                component: componentName,
+                total: matched.length,
+                nodes: matched
+            }
+        };
+    }
+
+    function listComponentMethods(component, allowPrivate) {
+        const names = new Set();
+        let cursor = component;
+        while (cursor && cursor !== Object.prototype) {
+            for (const key of Object.getOwnPropertyNames(cursor)) {
+                if (key === 'constructor') {
+                    continue;
+                }
+                if (!allowPrivate && key.startsWith('_')) {
+                    continue;
+                }
+                try {
+                    if (typeof component[key] === 'function') {
+                        names.add(key);
+                    }
+                } catch (_) {
+                }
+            }
+            cursor = Object.getPrototypeOf(cursor);
+        }
+        return Array.from(names).sort().slice(0, 80);
+    }
+
+    function componentDetail(args) {
+        const target = findComponent(args);
+        if (target.error) {
+            return { success: false, error: target.error };
+        }
+        const options = {
+            maxDepth: Number(args.maxDepth) || 2,
+            maxArrayLength: Number(args.maxArrayLength) || 20,
+            includePrivate: !!args.includePrivate
+        };
+        const props = Array.isArray(args.props) ? args.props.map(String).filter(Boolean) : [];
+        const properties = {};
+        if (props.length) {
+            for (const prop of props) {
+                try {
+                    properties[prop] = safeValue(target.component[prop], 0, new WeakSet(), options);
+                } catch (error) {
+                    properties[prop] = `[读取失败：${error && error.message ? error.message : String(error)}]`;
+                }
+            }
+        } else {
+            Object.assign(properties, safeValue(target.component, 0, new WeakSet(), options));
+        }
+        return {
+            success: true,
+            data: {
+                node: target.found.path,
+                component: componentSummary(target.component),
+                methods: listComponentMethods(target.component, !!args.includePrivate),
+                properties
+            }
+        };
+    }
+
+    function parsePropertyPath(rawPath) {
+        const path = String(rawPath || '').trim();
+        const tokens = [];
+        let buffer = '';
+        let bracket = '';
+        let inBracket = false;
+        let quote = '';
+        function pushToken(value) {
+            const token = String(value || '').trim();
+            if (!token) {
+                return;
+            }
+            tokens.push(/^\d+$/.test(token) ? Number(token) : token);
+        }
+        for (let i = 0; i < path.length; i += 1) {
+            const char = path[i];
+            if (inBracket) {
+                if (quote) {
+                    if (char === quote) {
+                        quote = '';
+                    } else {
+                        bracket += char;
+                    }
+                    continue;
+                }
+                if (char === '"' || char === "'") {
+                    quote = char;
+                    continue;
+                }
+                if (char === ']') {
+                    pushToken(bracket);
+                    bracket = '';
+                    inBracket = false;
+                    continue;
+                }
+                bracket += char;
+                continue;
+            }
+            if (char === '.') {
+                pushToken(buffer);
+                buffer = '';
+                continue;
+            }
+            if (char === '[') {
+                pushToken(buffer);
+                buffer = '';
+                inBracket = true;
+                bracket = '';
+                continue;
+            }
+            buffer += char;
+        }
+        pushToken(buffer);
+        return tokens;
+    }
+
+    function resolvePropertyPath(root, tokens, options) {
+        let current = root;
+        const traversed = [];
+        for (const token of tokens) {
+            traversed.push(String(token));
+            if (!options.includePrivate && String(token).startsWith('_')) {
+                return {
+                    exists: false,
+                    error: `默认不允许读取私有属性路径：${traversed.join('.')}`
+                };
+            }
+            if (current === null || current === undefined || !(token in Object(current))) {
+                return {
+                    exists: false,
+                    failedAt: traversed.join('.')
+                };
+            }
+            current = current[token];
+        }
+        return { exists: true, value: current };
+    }
+
+    function getPropertyPath(args) {
+        const propertyPath = String(args.propertyPath || args.propPath || (args.component || args.componentType ? args.path : '') || '').trim();
+        if (!propertyPath) {
+            return { success: false, error: '缺少要读取的属性路径 propertyPath。' };
+        }
+        const options = {
+            maxDepth: Number(args.maxDepth) || 2,
+            maxArrayLength: Number(args.maxArrayLength) || 20,
+            includePrivate: !!args.includePrivate
+        };
+        const tokens = parsePropertyPath(propertyPath);
+        if (!tokens.length) {
+            return { success: false, error: `属性路径无效：${propertyPath}` };
+        }
+
+        let nodeInfo = null;
+        let targetInfo = null;
+        let root = null;
+        let rootType = '';
+        if (args.component || args.componentType) {
+            const target = findComponent(args);
+            if (target.error) {
+                return { success: false, error: target.error };
+            }
+            nodeInfo = target.found;
+            targetInfo = componentSummary(target.component);
+            root = target.component;
+            rootType = 'component';
+        } else {
+            const found = findNode(args.node || args.query || args.uuid);
+            if (!found) {
+                return { success: false, error: `未找到节点：${args.node || args.query || args.uuid || ''}` };
+            }
+            nodeInfo = found;
+            root = found.node;
+            rootType = 'node';
+            if (tokens[0] === 'node') {
+                tokens.shift();
+            }
+        }
+
+        const resolved = resolvePropertyPath(root, tokens, options);
+        if (!resolved.exists) {
+            return {
+                success: false,
+                error: resolved.error || `属性路径不存在：${propertyPath}${resolved.failedAt ? `，失败位置：${resolved.failedAt}` : ''}`,
+                data: {
+                    node: nodeInfo.path,
+                    target: rootType,
+                    component: targetInfo,
+                    propertyPath
+                }
+            };
+        }
+        return {
+            success: true,
+            data: {
+                node: nodeInfo.path,
+                target: rootType,
+                component: targetInfo,
+                propertyPath,
+                value: safeValue(resolved.value, 0, new WeakSet(), options)
+            }
+        };
+    }
+
+    async function callComponentMethod(args) {
+        const target = findComponent(args);
+        if (target.error) {
+            return { success: false, error: target.error };
+        }
+        const method = String(args.method || '').trim();
+        if (!method) {
+            return { success: false, error: '缺少要调用的方法名 method。' };
+        }
+        if (!args.allowPrivateMethod && method.startsWith('_')) {
+            return { success: false, error: `默认不允许调用私有方法：${method}` };
+        }
+        const fn = target.component[method];
+        if (typeof fn !== 'function') {
+            return {
+                success: false,
+                error: `组件 ${getComponentType(target.component)} 上不存在可调用方法：${method}`,
+                data: {
+                    methods: listComponentMethods(target.component, !!args.allowPrivateMethod)
+                }
+            };
+        }
+        const methodArgs = Array.isArray(args.args) ? args.args : [];
+        try {
+            const value = await fn.apply(target.component, methodArgs);
+            return {
+                success: true,
+                message: `已调用运行态方法：${getComponentType(target.component)}.${method}()`,
+                data: {
+                    node: target.found.path,
+                    component: componentSummary(target.component),
+                    method,
+                    args: methodArgs,
+                    result: safeValue(value, 0, new WeakSet(), {
+                        maxDepth: Number(args.maxDepth) || 2,
+                        maxArrayLength: Number(args.maxArrayLength) || 20,
+                        includePrivate: !!args.includePrivate
+                    })
+                }
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: `调用运行态方法失败：${error && error.message ? error.message : String(error)}`,
+                data: {
+                    node: target.found.path,
+                    component: componentSummary(target.component),
+                    method
+                }
+            };
+        }
+    }
+
+    function filterConsoleLogs(args) {
+        const logType = String(args.logType || 'all').toLowerCase();
+        const keyword = String(args.keyword || '').toLowerCase();
+        const sinceIndex = Number(args.sinceIndex) || 0;
+        const limit = Math.max(1, Math.min(Number(args.limit) || 100, CONSOLE_LOG_LIMIT));
+        let logs = consoleLogs.slice();
+        if (sinceIndex > 0) {
+            logs = logs.filter((item) => Number(item.index) > sinceIndex);
+        }
+        if (logType && logType !== 'all') {
+            logs = logs.filter((item) => item.level === logType);
+        }
+        if (keyword) {
+            logs = logs.filter((item) => String(item.text || '').toLowerCase().includes(keyword));
+        }
+        return logs.slice(-limit);
+    }
+
+    async function getConsoleLogs(args) {
+        const waitMs = Math.max(0, Math.min(Number(args.waitMs) || 0, 10000));
+        const intervalMs = Math.max(20, Math.min(Number(args.intervalMs) || 100, 1000));
+        const startedAt = Date.now();
+        let logs = filterConsoleLogs(args);
+        while (!logs.length && waitMs > 0 && Date.now() - startedAt < waitMs) {
+            await sleep(intervalMs);
+            logs = filterConsoleLogs(args);
+        }
+        const result = {
+            success: true,
+            data: {
+                totalStored: consoleLogs.length,
+                returned: logs.length,
+                waitedMs: Date.now() - startedAt,
+                logs
+            }
+        };
+        if (args.clear) {
+            consoleLogs.length = 0;
+        }
+        return result;
     }
 
     function setNodeActive(args) {
@@ -578,6 +1041,8 @@
             }
             case 'find_node':
                 return { success: true, data: findNodes(args) };
+            case 'find_nodes_by_component':
+                return findNodesByComponent(args);
             case 'get_node_info': {
                 const found = findNode(args.node || args.query || args.uuid || args.path);
                 if (!found) {
@@ -587,6 +1052,14 @@
             }
             case 'get_component_info':
                 return componentInfo(args);
+            case 'get_component_detail':
+                return componentDetail(args);
+            case 'get_property_path':
+                return getPropertyPath(args);
+            case 'call_component_method':
+                return await callComponentMethod(args);
+            case 'get_console_logs':
+                return await getConsoleLogs(args);
             case 'set_node_active':
                 return setNodeActive(args);
             case 'set_node_transform':
@@ -696,11 +1169,41 @@
         findNode: function (query) {
             return execute({ action: 'find_node', args: { query } });
         },
+        findNodesByComponent: function (component) {
+            return execute({ action: 'find_nodes_by_component', args: { component } });
+        },
         getNodeInfo: function (node) {
             return execute({ action: 'get_node_info', args: { node } });
+        },
+        getComponentDetail: function (node, component, options) {
+            return execute({
+                action: 'get_component_detail',
+                args: Object.assign({}, options || {}, { node, component })
+            });
+        },
+        callComponentMethod: function (node, component, method, args, options) {
+            return execute({
+                action: 'call_component_method',
+                args: Object.assign({}, options || {}, {
+                    node,
+                    component,
+                    method,
+                    args: Array.isArray(args) ? args : []
+                })
+            });
+        },
+        getPropertyPath: function (node, component, propertyPath, options) {
+            return execute({
+                action: 'get_property_path',
+                args: Object.assign({}, options || {}, { node, component, propertyPath })
+            });
+        },
+        getConsoleLogs: function (options) {
+            return execute({ action: 'get_console_logs', args: options || {} });
         }
     };
 
+    installConsoleCapture();
     setInterval(() => {
         heartbeat().catch(() => {});
     }, 3000);

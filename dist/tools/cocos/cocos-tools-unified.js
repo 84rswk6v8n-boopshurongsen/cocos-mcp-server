@@ -16,6 +16,7 @@ const { BuilderHandler } = require('./handlers/builder-handler');
 const { AnimationHandler } = require('./handlers/animation-handler');
 const { SpineHandler } = require('./handlers/spine-handler');
 const { FontHandler } = require('./handlers/font-handler');
+const { PhysicsHandler } = require('./handlers/physics-handler');
 const { MessageRecorder } = require('./utils/message-recorder');
 const { getExtendedToolDefinitions, executeExtendedTool } = require('./extended-tools-registry');
 
@@ -45,7 +46,8 @@ function createCoreHandlers() {
         builder: new BuilderHandler(),
         animation: new AnimationHandler(),
         spine: new SpineHandler(),
-        label: new FontHandler()
+        label: new FontHandler(),
+        physics: new PhysicsHandler()
     };
 }
 
