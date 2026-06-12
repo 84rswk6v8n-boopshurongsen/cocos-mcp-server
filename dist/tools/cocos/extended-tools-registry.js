@@ -37,6 +37,10 @@ function createRuntimeHandler() {
     return createFreshHandler('./handlers/runtime-handler', 'RuntimeHandler');
 }
 
+function createPhysicsHandler() {
+    return createFreshHandler('./handlers/physics-handler', 'PhysicsHandler');
+}
+
 function getPreviewState() {
     if (!globalThis.__cocosMcpPreviewStatus) {
         globalThis.__cocosMcpPreviewStatus = {
@@ -165,7 +169,8 @@ function getExtendedToolDefinitions() {
         createAnimationMaskHandler().getToolDefinition(),
         createAnimationGraphHandler().getToolDefinition(),
         createPreviewToolDefinition(),
-        createRuntimeHandler().getToolDefinition()
+        createRuntimeHandler().getToolDefinition(),
+        createPhysicsHandler().getToolDefinition()
     ];
 }
 
@@ -287,6 +292,9 @@ async function executeExtendedTool(instance, originalExecute, toolName, args) {
     }
     if (isToolName(toolName, 'runtime')) {
         return await executeHandler(createRuntimeHandler, args);
+    }
+    if (isToolName(toolName, 'physics')) {
+        return await executeHandler(createPhysicsHandler, args);
     }
 
     return null;

@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { ComponentHandler } = require('./component-handler');
 const { NodeHandler } = require('./node-handler');
 
@@ -12,7 +14,16 @@ const ACTIONS = [
     'set_collider',
     'setup_trigger_zone',
     'setup_projectile_collision',
-    'validate_physics'
+    'validate_physics',
+    'list_collision_groups',
+    'set_collision_group',
+    'set_collision_mask',
+    'inspect_physics_settings',
+    'set_physics_debug',
+    'validate_physics_scene',
+    'create_physics_material',
+    'assign_physics_material',
+    'inspect_physics_material'
 ];
 
 const RIGIDBODY_3D = 'cc.RigidBody';
@@ -37,6 +48,48 @@ function ok(data, message) {
     return { success: true, data, message };
 }
 
+function projectRoot() {
+    try {
+        if (globalThis.Editor && Editor.Project && Editor.Project.path) {
+            return Editor.Project.path;
+        }
+    }
+    catch (_) {}
+    return process.cwd();
+}
+
+function toDbUrl(assetUrl, fallbackFolder, fallbackExt) {
+    if (assetUrl && String(assetUrl).startsWith('db://')) {
+        return String(assetUrl);
+    }
+    if (assetUrl) {
+        return `db://assets/${String(assetUrl).replace(/^\/+/, '')}`;
+    }
+    const folder = fallbackFolder || 'db://assets/physics';
+    const name = `PhysicsMaterial_${Date.now()}${fallbackExt || '.physics-material'}`;
+    return `${folder.replace(/\/$/, '')}/${name}`;
+}
+
+function dbUrlToFilePath(dbUrl) {
+    const normalized = String(dbUrl || '').replace(/\\/g, '/');
+    if (!normalized.startsWith('db://assets/')) {
+        return null;
+    }
+    return path.join(projectRoot(), 'assets', normalized.slice('db://assets/'.length));
+}
+
+function readJsonIfExists(filePath) {
+    try {
+        if (!filePath || !fs.existsSync(filePath)) {
+            return null;
+        }
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    }
+    catch (_) {
+        return null;
+    }
+}
+
 function fail(error, data) {
     return { success: false, error, data };
 }
@@ -52,6 +105,11 @@ function propValue(component, name) {
     }
     const prop = props[name];
     return Object.prototype.hasOwnProperty.call(prop, 'value') ? prop.value : prop;
+}
+
+function propMeta(component, name) {
+    const props = component && component.properties;
+    return props && props[name] ? props[name] : null;
 }
 
 function compactProperties(component) {
@@ -72,7 +130,10 @@ function compactProperties(component) {
         'height',
         'direction',
         'group',
-        'mask'
+        'mask',
+        'material',
+        'sharedMaterial',
+        'physicsMaterial'
     ];
     const output = {};
     for (const key of keys) {
@@ -105,6 +166,17 @@ function simplifyComponent(component) {
         category: isRigidbody(type) ? 'rigidbody' : isCollider(type) ? 'collider' : 'other',
         properties: compactProperties(component)
     };
+}
+
+function normalizeEnumList(meta) {
+    const list = meta && (meta.enumList || meta.enum || meta.enums);
+    if (!Array.isArray(list)) {
+        return [];
+    }
+    return list.map((item) => ({
+        name: item && (item.name || item.label || item.displayName),
+        value: item && Object.prototype.hasOwnProperty.call(item, 'value') ? item.value : item
+    })).filter((item) => item.name !== undefined || item.value !== undefined);
 }
 
 function getComponents(result) {
@@ -168,6 +240,9 @@ function inferPropertyType(value) {
     if (isObject(value) && ['x', 'y'].every((key) => Object.prototype.hasOwnProperty.call(value, key))) {
         return Object.prototype.hasOwnProperty.call(value, 'z') ? 'vec3' : 'vec2';
     }
+    if (isObject(value) && Object.prototype.hasOwnProperty.call(value, 'uuid')) {
+        return 'asset';
+    }
     return undefined;
 }
 
@@ -191,6 +266,79 @@ function colliderTypeFor(args) {
     return COLLIDER_TYPES.box;
 }
 
+function materialContent(args) {
+    const friction = Number(args.friction !== undefined ? args.friction : 0.6);
+    const restitution = Number(args.restitution !== undefined ? args.restitution : 0);
+    const rollingFriction = Number(args.rollingFriction !== undefined ? args.rollingFriction : 0);
+    const spinningFriction = Number(args.spinningFriction !== undefined ? args.spinningFriction : 0);
+    return JSON.stringify({
+        __type__: 'cc.PhysicsMaterial',
+        _name: args.name || 'PhysicsMaterial',
+        friction,
+        restitution,
+        rollingFriction,
+        spinningFriction
+    }, null, 2);
+}
+
+function metaContent() {
+    return JSON.stringify({
+        ver: '1.0.0',
+        importer: 'physics-material'
+    }, null, 2);
+}
+
+function uniqueByValue(items) {
+    const map = new Map();
+    for (const item of items || []) {
+        if (!item) {
+            continue;
+        }
+        const key = `${item.name || ''}:${item.value}`;
+        if (!map.has(key)) {
+            map.set(key, item);
+        }
+    }
+    return Array.from(map.values());
+}
+
+function hasProperty(component, property) {
+    return !!(component && component.properties && component.properties[property]);
+}
+
+function resolveEnumValue(value, groups) {
+    if (typeof value === 'number') {
+        return { success: true, value };
+    }
+    if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) {
+        return { success: true, value: Number(value) };
+    }
+    const normalized = String(value || '').toLowerCase();
+    const match = (groups || []).find((item) => String(item.name || '').toLowerCase() === normalized);
+    if (match) {
+        return { success: true, value: match.value };
+    }
+    return fail(`未找到碰撞分组：${value}`);
+}
+
+function collectMatchingKeys(data, patterns, prefix, output) {
+    if (!data || typeof data !== 'object') {
+        return;
+    }
+    for (const [key, value] of Object.entries(data)) {
+        const nextPath = prefix ? `${prefix}.${key}` : key;
+        if (patterns.some((pattern) => pattern.test(key) || pattern.test(nextPath))) {
+            output.push({
+                path: nextPath,
+                value: typeof value === 'object' ? '[object]' : value
+            });
+        }
+        if (value && typeof value === 'object') {
+            collectMatchingKeys(value, patterns, nextPath, output);
+        }
+    }
+}
+
 class PhysicsHandler {
     constructor() {
         this.component = new ComponentHandler();
@@ -203,7 +351,7 @@ class PhysicsHandler {
             description: [
                 'Cocos 物理配置工具，用于检查和配置刚体、碰撞体、触发区域和投射物碰撞。',
                 '该工具只处理物理组件配置，不生成战斗、AI、对象池或关卡脚本逻辑。',
-                'Actions: info, list, add_rigidbody, add_collider, set_rigidbody, set_collider, setup_trigger_zone, setup_projectile_collision, validate_physics.'
+                'Actions: info, list, add_rigidbody, add_collider, set_rigidbody, set_collider, setup_trigger_zone, setup_projectile_collision, validate_physics, list_collision_groups, set_collision_group, set_collision_mask, inspect_physics_settings, set_physics_debug, validate_physics_scene, create_physics_material, assign_physics_material, inspect_physics_material.'
             ].join('\n'),
             inputSchema: {
                 type: 'object',
@@ -261,6 +409,47 @@ class PhysicsHandler {
                     maxNodes: {
                         type: 'number',
                         description: 'list/validate_physics 最多扫描节点数量，默认 200'
+                    },
+                    componentScope: {
+                        type: 'string',
+                        enum: ['all', 'rigidbody', 'collider'],
+                        description: 'set_collision_group/set_collision_mask/assign_physics_material 的组件范围，默认 all'
+                    },
+                    materialUrl: {
+                        type: 'string',
+                        description: '物理材质资源路径，例如 db://assets/physics/Bouncy.physics-material'
+                    },
+                    folder: {
+                        type: 'string',
+                        description: '创建物理材质的目标文件夹，默认 db://assets/physics'
+                    },
+                    name: {
+                        type: 'string',
+                        description: '物理材质名称'
+                    },
+                    friction: {
+                        type: 'number',
+                        description: '物理材质摩擦力'
+                    },
+                    restitution: {
+                        type: 'number',
+                        description: '物理材质弹力/反弹系数'
+                    },
+                    rollingFriction: {
+                        type: 'number',
+                        description: '滚动摩擦'
+                    },
+                    spinningFriction: {
+                        type: 'number',
+                        description: '旋转摩擦'
+                    },
+                    enabled: {
+                        type: 'boolean',
+                        description: 'set_physics_debug 是否启用调试显示'
+                    },
+                    overwrite: {
+                        type: 'boolean',
+                        description: 'create_physics_material 是否覆盖已有资源'
                     }
                 },
                 required: ['action']
@@ -288,6 +477,24 @@ class PhysicsHandler {
                 return await this.setupProjectileCollision(args);
             case 'validate_physics':
                 return await this.validatePhysics(args);
+            case 'list_collision_groups':
+                return await this.listCollisionGroups(args);
+            case 'set_collision_group':
+                return await this.setCollisionGroup(args);
+            case 'set_collision_mask':
+                return await this.setCollisionMask(args);
+            case 'inspect_physics_settings':
+                return await this.inspectPhysicsSettings(args);
+            case 'set_physics_debug':
+                return await this.setPhysicsDebug(args);
+            case 'validate_physics_scene':
+                return await this.validatePhysicsScene(args);
+            case 'create_physics_material':
+                return await this.createPhysicsMaterial(args);
+            case 'assign_physics_material':
+                return await this.assignPhysicsMaterial(args);
+            case 'inspect_physics_material':
+                return await this.inspectPhysicsMaterial(args);
             default:
                 return fail(`未知物理操作：${args.action || '(empty)'}`);
         }
@@ -594,6 +801,398 @@ class PhysicsHandler {
             issueCount: issues.length,
             issues
         });
+    }
+
+    async getRawPhysicsComponents(node, scope) {
+        const result = await this.component.execute({ action: 'list', node });
+        if (!result || !result.success) {
+            return { success: false, error: result && result.error ? result.error : '读取节点组件失败' };
+        }
+        const requestedScope = String(scope || 'all').toLowerCase();
+        const components = getComponents(result).filter((component) => {
+            const type = componentType(component);
+            if (requestedScope === 'rigidbody') {
+                return isRigidbody(type);
+            }
+            if (requestedScope === 'collider') {
+                return isCollider(type);
+            }
+            return isRigidbody(type) || isCollider(type);
+        });
+        return { success: true, data: { components } };
+    }
+
+    async listCollisionGroups(args) {
+        const groups = [];
+        const inspectedNodes = [];
+        const errors = [];
+        let source = 'fallback';
+        let nodeIds = [];
+        if (args.node) {
+            nodeIds = [args.node];
+        }
+        else {
+            const list = await this.list(args);
+            if (list && list.success) {
+                nodeIds = (list.data.nodes || []).map((item) => item.uuid || item.node).filter(Boolean);
+            }
+        }
+        const maxNodes = Math.max(1, Number(args.maxNodes) || 50);
+        for (const nodeId of nodeIds.slice(0, maxNodes)) {
+            const raw = await this.getRawPhysicsComponents(nodeId, 'all');
+            if (!raw.success) {
+                errors.push({ node: nodeId, error: raw.error });
+                continue;
+            }
+            inspectedNodes.push(nodeId);
+            for (const component of raw.data.components || []) {
+                const meta = propMeta(component, 'group');
+                const list = normalizeEnumList(meta);
+                if (list.length > 0) {
+                    source = 'component metadata';
+                    groups.push(...list);
+                }
+                const current = propValue(component, 'group');
+                if (current !== undefined) {
+                    groups.push({
+                        name: current === 1 ? 'DEFAULT' : `GROUP_${current}`,
+                        value: current
+                    });
+                }
+            }
+        }
+        if (groups.length === 0) {
+            groups.push({ name: 'DEFAULT', value: 1 });
+        }
+        return ok({
+            groups: uniqueByValue(groups),
+            source,
+            inspectedNodes,
+            errors,
+            note: source === 'fallback'
+                ? '当前场景没有可读取的碰撞分组元数据，已返回 Cocos 默认分组。'
+                : '碰撞分组来自当前物理组件的属性元数据。'
+        });
+    }
+
+    async setCollisionGroup(args) {
+        const missing = this.requireNode(args);
+        if (missing) {
+            return missing;
+        }
+        if (args.group === undefined) {
+            return fail('group 是必填参数。');
+        }
+        const groupInfo = await this.listCollisionGroups(Object.assign({}, args, { node: args.node }));
+        const resolved = resolveEnumValue(args.group, groupInfo && groupInfo.success ? groupInfo.data.groups : []);
+        if (!resolved.success) {
+            return resolved;
+        }
+        const raw = await this.getRawPhysicsComponents(args.node, args.componentScope || 'all');
+        if (!raw.success) {
+            return raw;
+        }
+        const targets = (raw.data.components || []).filter((component) => hasProperty(component, 'group'));
+        if (targets.length === 0) {
+            return fail('当前目标物理组件没有可写入的 group 属性。3D 碰撞分组通常写在 cc.RigidBody 上。', {
+                node: args.node,
+                componentScope: args.componentScope || 'all',
+                components: (raw.data.components || []).map((component) => componentType(component))
+            });
+        }
+        const results = [];
+        for (const component of targets) {
+            const type = componentType(component);
+            results.push({
+                componentType: type,
+                result: await this.setProperty(args.node, type, 'group', resolved.value, 'integer')
+            });
+        }
+        return ok({
+            node: args.node,
+            group: resolved.value,
+            updated: results.filter((item) => item.result && item.result.success).length,
+            results
+        }, '碰撞分组已更新。');
+    }
+
+    async setCollisionMask(args) {
+        const missing = this.requireNode(args);
+        if (missing) {
+            return missing;
+        }
+        if (args.mask === undefined) {
+            return fail('mask 是必填参数。');
+        }
+        const raw = await this.getRawPhysicsComponents(args.node, args.componentScope || 'all');
+        if (!raw.success) {
+            return raw;
+        }
+        const targets = (raw.data.components || []).filter((component) => hasProperty(component, 'mask'));
+        if (targets.length === 0) {
+            return fail('当前目标物理组件没有可写入的 mask 属性。Cocos Creator 3D 物理常用 group 分组，mask 不一定暴露在组件属性上。', {
+                node: args.node,
+                componentScope: args.componentScope || 'all',
+                components: (raw.data.components || []).map((component) => componentType(component))
+            });
+        }
+        const maskValue = typeof args.mask === 'number' ? args.mask : Number(args.mask);
+        if (Number.isNaN(maskValue)) {
+            return fail(`mask 必须是数字或数字字符串：${args.mask}`);
+        }
+        const results = [];
+        for (const component of targets) {
+            const type = componentType(component);
+            results.push({
+                componentType: type,
+                result: await this.setProperty(args.node, type, 'mask', maskValue, 'integer')
+            });
+        }
+        return ok({
+            node: args.node,
+            mask: maskValue,
+            updated: results.filter((item) => item.result && item.result.success).length,
+            results
+        }, '碰撞掩码已更新。');
+    }
+
+    async inspectPhysicsSettings() {
+        const root = projectRoot();
+        const files = [
+            'settings/v2/packages/project.json',
+            'settings/v2/packages/engine.json',
+            'profiles/v2/packages/project.json',
+            'profiles/v2/packages/engine.json'
+        ];
+        const patterns = [/physics/i, /collision/i, /gravity/i, /debug/i, /group/i, /mask/i];
+        const checked = [];
+        const matches = [];
+        for (const relative of files) {
+            const filePath = path.join(root, relative);
+            const exists = fs.existsSync(filePath);
+            checked.push({ relative, exists });
+            const json = readJsonIfExists(filePath);
+            if (json) {
+                const output = [];
+                collectMatchingKeys(json, patterns, '', output);
+                if (output.length > 0) {
+                    matches.push({ relative, keys: output.slice(0, 100) });
+                }
+            }
+        }
+        return ok({
+            projectRoot: root,
+            checked,
+            matches,
+            supportLevel: matches.length > 0 ? 'detected' : 'limited',
+            message: matches.length > 0
+                ? '已在项目设置文件中发现疑似物理配置字段。'
+                : '未在常见项目设置文件中发现稳定的物理配置字段；当前工具主要通过节点组件读写物理配置。'
+        });
+    }
+
+    async setPhysicsDebug(args) {
+        return fail('当前版本尚未确认 Cocos Creator 3.8 稳定的物理调试显示写入接口，因此不会硬写项目配置。请先在编辑器项目设置中开启物理调试显示。', {
+            requestedEnabled: args.enabled,
+            settings: await this.inspectPhysicsSettings(args)
+        });
+    }
+
+    async validatePhysicsScene(args) {
+        const validation = await this.validatePhysics(args);
+        if (!validation || !validation.success) {
+            return validation;
+        }
+        const groups = await this.listCollisionGroups(args);
+        const settings = await this.inspectPhysicsSettings(args);
+        const issues = Array.isArray(validation.data.issues) ? validation.data.issues.slice() : [];
+        const knownGroupValues = new Set(((groups.data && groups.data.groups) || []).map((item) => item.value));
+        const list = await this.list(args);
+        if (list && list.success) {
+            for (const item of list.data.nodes || []) {
+                for (const body of item.rigidbodies || []) {
+                    const value = body.properties && body.properties.group;
+                    if (value !== undefined && knownGroupValues.size > 0 && !knownGroupValues.has(value)) {
+                        issues.push({
+                            severity: 'warning',
+                            node: item.node,
+                            component: body.type,
+                            message: `刚体使用了当前分组列表中未出现的 group：${value}`
+                        });
+                    }
+                }
+            }
+        }
+        return ok({
+            physics: validation.data,
+            collisionGroups: groups.success ? groups.data : null,
+            settings: settings.success ? settings.data : null,
+            issueCount: issues.length,
+            issues
+        });
+    }
+
+    materialDbUrl(args) {
+        let dbUrl;
+        const explicitUrl = args.materialUrl || args.url;
+        if (explicitUrl) {
+            dbUrl = toDbUrl(explicitUrl, args.folder, '.physics-material');
+        }
+        else {
+            let folder = args.folder || 'db://assets/physics';
+            if (!String(folder).startsWith('db://')) {
+                folder = `db://assets/${String(folder).replace(/^\/+/, '')}`;
+            }
+            let name = args.name || `PhysicsMaterial_${Date.now()}`;
+            if (!/\.(physics-material|physic-material)$/i.test(name)) {
+                name = `${name}.physics-material`;
+            }
+            dbUrl = `${String(folder).replace(/\/$/, '')}/${name}`;
+        }
+        if (!/\.(physics-material|physic-material)$/i.test(dbUrl)) {
+            const baseName = args.name || path.basename(dbUrl).replace(/\.[^.]+$/, '') || `PhysicsMaterial_${Date.now()}`;
+            dbUrl = `${dbUrl.replace(/\/$/, '')}/${baseName}.physics-material`;
+        }
+        return dbUrl;
+    }
+
+    async refreshAsset(dbUrl) {
+        if (!globalThis.Editor || !Editor.Message || !Editor.Message.request) {
+            return { success: false, skipped: true, reason: 'Editor.Message 不可用' };
+        }
+        const attempts = [
+            ['asset-db', 'refresh-asset', dbUrl],
+            ['asset-db', 'refresh', dbUrl],
+            ['asset-db', 'refresh']
+        ];
+        for (const [channel, message, payload] of attempts) {
+            try {
+                const result = payload === undefined
+                    ? await Editor.Message.request(channel, message)
+                    : await Editor.Message.request(channel, message, payload);
+                return { success: true, channel, message, result };
+            }
+            catch (_) {}
+        }
+        return { success: false, skipped: true, reason: 'asset-db 刷新接口不可用' };
+    }
+
+    async queryAssetUuid(dbUrl) {
+        if (!globalThis.Editor || !Editor.Message || !Editor.Message.request) {
+            return null;
+        }
+        const attempts = [
+            ['asset-db', 'query-uuid', dbUrl],
+            ['asset-db', 'query-asset-uuid', dbUrl],
+            ['asset-db', 'query-url-to-uuid', dbUrl]
+        ];
+        for (const [channel, message, payload] of attempts) {
+            try {
+                const result = await Editor.Message.request(channel, message, payload);
+                if (typeof result === 'string' && result) {
+                    return result;
+                }
+                if (result && typeof result.uuid === 'string') {
+                    return result.uuid;
+                }
+            }
+            catch (_) {}
+        }
+        return null;
+    }
+
+    async createPhysicsMaterial(args) {
+        const dbUrl = this.materialDbUrl(args);
+        const filePath = dbUrlToFilePath(dbUrl);
+        if (!filePath) {
+            return fail(`只支持 db://assets 下的物理材质路径：${dbUrl}`);
+        }
+        if (fs.existsSync(filePath) && args.overwrite !== true) {
+            return fail('物理材质资源已存在，如需覆盖请传 overwrite: true。', { dbUrl, filePath });
+        }
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, materialContent(Object.assign({}, args, { name: args.name || path.basename(filePath, path.extname(filePath)) })), 'utf8');
+        const metaPath = `${filePath}.meta`;
+        if (!fs.existsSync(metaPath) || args.overwrite === true) {
+            fs.writeFileSync(metaPath, metaContent(), 'utf8');
+        }
+        const refresh = await this.refreshAsset(dbUrl);
+        return ok({
+            dbUrl,
+            filePath,
+            metaPath,
+            properties: {
+                friction: Number(args.friction !== undefined ? args.friction : 0.6),
+                restitution: Number(args.restitution !== undefined ? args.restitution : 0),
+                rollingFriction: Number(args.rollingFriction !== undefined ? args.rollingFriction : 0),
+                spinningFriction: Number(args.spinningFriction !== undefined ? args.spinningFriction : 0)
+            },
+            refresh
+        }, '物理材质资源已创建。');
+    }
+
+    async inspectPhysicsMaterial(args) {
+        const dbUrl = this.materialDbUrl(args);
+        const filePath = dbUrlToFilePath(dbUrl);
+        if (!filePath || !fs.existsSync(filePath)) {
+            return fail('未找到物理材质资源。', { dbUrl, filePath });
+        }
+        const json = readJsonIfExists(filePath);
+        const meta = readJsonIfExists(`${filePath}.meta`);
+        return ok({
+            dbUrl,
+            filePath,
+            material: json,
+            meta
+        });
+    }
+
+    async assignPhysicsMaterial(args) {
+        const missing = this.requireNode(args);
+        if (missing) {
+            return missing;
+        }
+        if (!args.materialUrl && !args.url) {
+            return fail('materialUrl 是必填参数。');
+        }
+        const dbUrl = this.materialDbUrl(args);
+        const raw = await this.getRawPhysicsComponents(args.node, args.componentScope || 'collider');
+        if (!raw.success) {
+            return raw;
+        }
+        const targets = (raw.data.components || []).filter((component) => isCollider(componentType(component)));
+        if (targets.length === 0) {
+            return fail('当前节点没有可绑定物理材质的碰撞体组件。', { node: args.node });
+        }
+        const uuid = await this.queryAssetUuid(dbUrl);
+        const assetValue = uuid || dbUrl;
+        const results = [];
+        for (const component of targets) {
+            const type = componentType(component);
+            const property = hasProperty(component, 'sharedMaterial')
+                ? 'sharedMaterial'
+                : hasProperty(component, 'material')
+                    ? 'material'
+                    : hasProperty(component, 'physicsMaterial')
+                        ? 'physicsMaterial'
+                        : null;
+            if (!property) {
+                results.push({ componentType: type, success: false, error: '组件没有材质属性' });
+                continue;
+            }
+            results.push({
+                componentType: type,
+                property,
+                result: await this.setProperty(args.node, type, property, assetValue, 'asset')
+            });
+        }
+        return ok({
+            node: args.node,
+            materialUrl: dbUrl,
+            uuid,
+            updated: results.filter((item) => item.result && item.result.success).length,
+            results
+        }, '物理材质已绑定到碰撞体。');
     }
 
     pickRigidbodyProperties(args) {

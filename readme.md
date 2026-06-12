@@ -21,7 +21,7 @@ Cocos MCP Server 是一个面向 Cocos Creator 3.7+ / 3.8.x 的 MCP 插件，让
 
 更多安装说明见 [INSTALL.md](./INSTALL.md)。
 
-## 20 个工具简表
+## 21 个工具简表
 
 | 工具 | 功能简介 |
 | --- | --- |
@@ -45,6 +45,7 @@ Cocos MCP Server 是一个面向 Cocos Creator 3.7+ / 3.8.x 的 MCP 插件，让
 | `preview` | 浏览器预览工具，用于启动、停止和查询预览状态，返回预览地址、端口、启动时间和服务复用情况。 |
 | `animation_mask` | Animation Mask 工具，用于创建、查询、更新 `.animask` 资源，批量设置骨骼遮罩，校验骨骼路径。 |
 | `animation_graph` | Animation Graph 工具，用于编辑 `.animgraph` 资源，管理参数、状态、连线、过渡条件、Layer，并校验动画图。 |
+| `physics` | 物理配置工具，用于检查和配置刚体、碰撞体、触发区、投射物碰撞、碰撞分组、物理材质和物理调试。 |
 
 ## 使用建议
 
@@ -53,6 +54,14 @@ Cocos MCP Server 是一个面向 Cocos Creator 3.7+ / 3.8.x 的 MCP 插件，让
 - 构建复杂 UI 层级时优先使用 `builder`，简单按钮、文本、图片可用 `composite`。
 - 检查断裂资源引用可用 `scene.validate_scene`，做布局和层级深度检查可用 `validate`。
 - 不熟悉某个工具 action 时，可先用 `knowledge` 查询 `tool_guide`。
+
+## v1.7.7 更新内容
+
+- 增强 `cocos_runtime` 运行态桥接，新增按组件查找运行时节点、读取属性路径、调用组件方法和等待运行时控制台日志等能力。
+- 优化运行态日志读取，支持按 `sinceIndex`、关键字、日志级别和等待时间获取浏览器预览页日志，便于验证运行后效果。
+- 增加运行态私有属性路径保护，默认阻止读取 `_` 开头的私有属性路径。
+- 优化 Codex stdio 桥接默认 MCP 地址，默认指向 `http://127.0.0.1:3300/mcp`，降低端口配置缺失时的连接失败概率。
+- 已验证 `bridgeVersion 0.1.4` 在 Cocos 浏览器预览页中可正常完成场景 ready、组件查找、属性读取、方法调用和日志回读。
 
 ## v1.7.6 更新内容
 

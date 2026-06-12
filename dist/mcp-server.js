@@ -162,14 +162,28 @@ class MCPServer {
                 lastStartedAt: null,
                 lastEndedAt: null,
                 lastDuration: 0,
+                lastActionName: "",
                 lastError: ""
             });
         }
         return this.toolStats.get(name);
     }
 
-    beginToolCall(toolName) {
+    getToolActionName(args) {
+        const payload = args && typeof args === "object" ? args : {};
+        const keys = ["action", "method", "operation", "preset", "fn", "eventType", "query"];
+        for (const key of keys) {
+            const value = payload[key];
+            if (value != null && value !== "") {
+                return `${key}: ${String(value)}`;
+            }
+        }
+        return "办公中";
+    }
+
+    beginToolCall(toolName, args) {
         const name = String(toolName || "unknown");
+        const actionName = this.getToolActionName(args);
         const startedAt = Date.now();
         const id = `${startedAt}-${++this.toolCallSequence}`;
         const stat = this.getToolStat(name);
@@ -178,13 +192,15 @@ class MCPServer {
         stat.running += 1;
         stat.lastStatus = "running";
         stat.lastStartedAt = startedAt;
+        stat.lastActionName = actionName;
         stat.lastError = "";
         this.activeToolCalls.set(id, {
             id,
             toolName: name,
+            actionName,
             startedAt
         });
-        return { id, toolName: name, startedAt };
+        return { id, toolName: name, actionName, startedAt };
     }
 
     finishToolCall(toolCall, error) {
@@ -385,7 +401,7 @@ class MCPServer {
                         },
                         serverInfo: {
                             name: "cocos-mcp-server",
-                            version: "1.7.6"
+                            version: "1.7.7"
                         }
                     };
                     break;
@@ -398,7 +414,7 @@ class MCPServer {
                     result = { tools: this.getAvailableTools() };
                     break;
                 case "tools/call": {
-                    const toolCall = this.beginToolCall(params.name);
+                    const toolCall = this.beginToolCall(params.name, params.arguments || {});
                     let toolResult;
                     try {
                         toolResult = await this.executeToolCall(params.name, params.arguments || {});
@@ -1182,7 +1198,7 @@ class MCPServer {
         }
 
         try {
-            const toolCall = this.beginToolCall(fullToolName);
+            const toolCall = this.beginToolCall(fullToolName, params);
             let result;
             try {
                 result = await this.executeToolCall(fullToolName, params);

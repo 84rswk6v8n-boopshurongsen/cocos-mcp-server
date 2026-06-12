@@ -13,6 +13,7 @@ class RuntimeBridgeManager {
         this.staleClientMs = 60000;
         this.port = Number(settings.port) || 3300;
         this.minimumBridgeVersion = '0.1.4';
+        this.activeClientId = null;
     }
 
     getBridgeScript() {
@@ -215,6 +216,10 @@ class RuntimeBridgeManager {
             };
         }
 
+        if (action === 'get_console_logs') {
+            return await this.executeConsoleLogs(args || {});
+        }
+
         const client = this.getActiveClient();
         if (!client) {
             return {
@@ -223,6 +228,10 @@ class RuntimeBridgeManager {
             };
         }
 
+        return await this.executeOnClient(client, action, args || {});
+    }
+
+    async executeOnClient(client, action, args) {
         const command = {
             id: uuidv4(),
             action,
@@ -239,9 +248,85 @@ class RuntimeBridgeManager {
                 });
             }, this.getCommandTimeout(args));
 
-            this.pendingCommands.set(command.id, { resolve, timer });
+            this.pendingCommands.set(command.id, { resolve, timer, clientId: client.id });
             this.enqueueCommand(client, command);
         });
+    }
+
+    async executeConsoleLogs(args) {
+        this.cleanupStaleClients();
+        let clients = Array.from(this.clients.values()).filter((client) => {
+            const support = client.support || {};
+            return this.isUsableClient(client)
+                && !!client.pendingPoll
+                && !!(support.hasScene || support.ready);
+        });
+        if (!clients.length) {
+            const active = this.getActiveClient();
+            clients = active ? [active] : [];
+        }
+        if (!clients.length) {
+            return {
+                success: false,
+                error: '尚未连接 Cocos 运行态网页，请先在预览页面注入 runtime bridge 脚本。'
+            };
+        }
+
+        const waitMs = Math.max(0, Math.min(Number(args && args.waitMs) || 0, 10000));
+        const timeoutMs = Math.max(2000, Math.min(waitMs + 1000, 5000));
+        const commandArgs = Object.assign({}, args || {}, {
+            timeoutMs: Math.min(Number(args && args.timeoutMs) || timeoutMs, timeoutMs)
+        });
+        const results = await Promise.all(clients.map(async (client) => {
+            const result = await this.executeOnClient(client, 'get_console_logs', commandArgs);
+            return { client, result };
+        }));
+
+        const successResults = results.filter((item) => item.result && item.result.success && item.result.data);
+        if (!successResults.length) {
+            const firstError = results.find((item) => item.result && item.result.error);
+            return firstError && firstError.result || {
+                success: false,
+                error: '读取运行态日志失败。'
+            };
+        }
+
+        const logs = [];
+        const totals = [];
+        let waitedMs = 0;
+        for (const item of successResults) {
+            const data = item.result.data || {};
+            totals.push(Number(data.totalStored) || 0);
+            waitedMs = Math.max(waitedMs, Number(data.waitedMs) || 0);
+            for (const log of data.logs || []) {
+                logs.push(Object.assign({ clientId: item.client.id }, log));
+            }
+        }
+
+        logs.sort((left, right) => {
+            const leftTime = Date.parse(left.time || '') || 0;
+            const rightTime = Date.parse(right.time || '') || 0;
+            if (leftTime !== rightTime) {
+                return leftTime - rightTime;
+            }
+            return (Number(left.index) || 0) - (Number(right.index) || 0);
+        });
+
+        const limit = Math.max(1, Math.min(Number(args && args.limit) || 100, 500));
+        const limitedLogs = logs.slice(-limit);
+        const totalStored = totals.length ? Math.min(...totals) : 0;
+
+        return {
+            success: true,
+            data: {
+                totalStored,
+                maxStored: totals.length ? Math.max(...totals) : 0,
+                clientCount: successResults.length,
+                returned: limitedLogs.length,
+                waitedMs,
+                logs: limitedLogs
+            }
+        };
     }
 
     enqueueCommand(client, command) {
@@ -270,9 +355,16 @@ class RuntimeBridgeManager {
     }
 
     getActiveClient() {
+        const active = this.activeClientId ? this.clients.get(this.activeClientId) : null;
+        if (this.isUsableClient(active)) {
+            return active;
+        }
         let best = null;
         let bestScore = -1;
         for (const client of this.clients.values()) {
+            if (!this.isUsableClient(client)) {
+                continue;
+            }
             const support = client.support || {};
             let score = 0;
             if (support.support || support.hasCc) {
@@ -295,7 +387,7 @@ class RuntimeBridgeManager {
             if (support.diagnostics) {
                 score += 25;
             }
-            if (this.compareBridgeVersion(support.bridgeVersion, '0.1.2') >= 0) {
+            if (this.compareBridgeVersion(support.bridgeVersion, this.minimumBridgeVersion) >= 0) {
                 score += 25;
             }
             if (!best || score > bestScore || score === bestScore && client.lastSeen > best.lastSeen) {
@@ -303,7 +395,24 @@ class RuntimeBridgeManager {
                 bestScore = score;
             }
         }
-        return best || this.getLatestClient();
+        if (best) {
+            this.activeClientId = best.id;
+            return best;
+        }
+        this.activeClientId = null;
+        return null;
+    }
+
+    isUsableClient(client) {
+        if (!client) {
+            return false;
+        }
+        const support = client.support || {};
+        const bridgeVersion = support.bridgeVersion || '';
+        if (bridgeVersion && this.compareBridgeVersion(bridgeVersion, this.minimumBridgeVersion) < 0) {
+            return false;
+        }
+        return Date.now() - client.lastSeen <= this.staleClientMs;
     }
 
     compareBridgeVersion(left, right) {
@@ -334,6 +443,7 @@ class RuntimeBridgeManager {
             }
         }
         this.clients.clear();
+        this.activeClientId = null;
         for (const pending of this.pendingCommands.values()) {
             clearTimeout(pending.timer);
             pending.resolve({
@@ -383,6 +493,9 @@ class RuntimeBridgeManager {
                 }
             }
             this.clients.delete(id);
+            if (this.activeClientId === id) {
+                this.activeClientId = null;
+            }
         }
     }
 
@@ -393,6 +506,7 @@ class RuntimeBridgeManager {
             }
         }
         this.clients.clear();
+        this.activeClientId = null;
         for (const pending of this.pendingCommands.values()) {
             clearTimeout(pending.timer);
             pending.resolve({

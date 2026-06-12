@@ -84,6 +84,11 @@ module.exports = Editor.Panel.define({
             return shortName && shortName !== '-' ? shortName.charAt(0).toUpperCase() : '?';
         };
 
+        const getActionLabel = (value) => {
+            const textValue = String(value || '').trim();
+            return textValue || '办公中';
+        };
+
         const getCallId = (call) => {
             if (call && call.id) {
                 return String(call.id);
@@ -291,7 +296,7 @@ module.exports = Editor.Panel.define({
             window.setTimeout(() => revealOfficeRoom(callId), commuteTravelMs);
         };
 
-        const createOfficeRoom = (callId, toolName, startedAt) => {
+        const createOfficeRoom = (callId, toolName, startedAt, actionName) => {
             const item = document.createElement('div');
             const classes = ['active-tool-chip'];
             classes.push(officeRoomArrivedCallIds.has(callId) ? 'arrived' : 'pre-arrival');
@@ -319,7 +324,8 @@ module.exports = Editor.Panel.define({
 
             const state = document.createElement('div');
             state.className = 'active-tool-state';
-            state.textContent = '办公中';
+            state.textContent = getActionLabel(actionName);
+            state.title = state.textContent;
 
             const time = document.createElement('div');
             time.className = 'active-tool-time';
@@ -333,13 +339,14 @@ module.exports = Editor.Panel.define({
             return item;
         };
 
-        const addTransientOfficeRoom = (callId, toolName, startedAt) => {
+        const addTransientOfficeRoom = (callId, toolName, startedAt, actionName) => {
             if (!this.$.activeToolsList || getOfficeRoomByCallId(callId)) {
                 return;
             }
             transientOfficeCalls.set(callId, {
                 callId,
                 toolName,
+                actionName: getActionLabel(actionName),
                 startedAt: startedAt || Date.now(),
                 expiresAt: Date.now() + commuteTravelMs + minimumVisualWorkMs + 300,
             });
@@ -347,7 +354,7 @@ module.exports = Editor.Panel.define({
             if (empty) {
                 empty.remove();
             }
-            const room = createOfficeRoom(callId, toolName, startedAt);
+            const room = createOfficeRoom(callId, toolName, startedAt, actionName);
             this.$.activeToolsList.appendChild(room);
             window.setTimeout(() => {
                 transientOfficeCalls.delete(callId);
@@ -364,12 +371,12 @@ module.exports = Editor.Panel.define({
             }, commuteTravelMs + minimumVisualWorkMs + 300);
         };
 
-        const playTransientToolCall = (callId, toolName, startedAt, avatarByToolName) => {
+        const playTransientToolCall = (callId, toolName, startedAt, avatarByToolName, actionName) => {
             if (!toolName || replayedRecentCallIds.has(callId)) {
                 return;
             }
             replayedRecentCallIds.add(callId);
-            addTransientOfficeRoom(callId, toolName, startedAt || Date.now());
+            addTransientOfficeRoom(callId, toolName, startedAt || Date.now(), actionName);
             playCommute(toolName, callId, 'to-office', avatarByToolName);
             scheduleOfficeRoomReveal(callId);
             window.setTimeout(() => {
@@ -408,10 +415,10 @@ module.exports = Editor.Panel.define({
 
             for (const call of activeCalls.slice(-12).reverse()) {
                 const callId = getCallId(call);
-                this.$.activeToolsList.appendChild(createOfficeRoom(callId, call.toolName, call.startedAt || now));
+                this.$.activeToolsList.appendChild(createOfficeRoom(callId, call.toolName, call.startedAt || now, call.actionName));
             }
             for (const call of transientCalls.slice(-12).reverse()) {
-                this.$.activeToolsList.appendChild(createOfficeRoom(call.callId, call.toolName, call.startedAt || now));
+                this.$.activeToolsList.appendChild(createOfficeRoom(call.callId, call.toolName, call.startedAt || now, call.actionName));
             }
         };
 
@@ -579,12 +586,12 @@ module.exports = Editor.Panel.define({
                 const nextCount = Number(stat && stat.count || 0);
                 const previousCount = lastToolCounts.has(name) ? lastToolCounts.get(name) : nextCount;
                 if (hasToolCountBaseline && nextCount > previousCount && !activeToolNames.has(name)) {
-                    playTransientToolCall(`recent-${name}-${stat.lastStartedAt || Date.now()}-${nextCount}`, name, stat.lastStartedAt || Date.now(), avatarByToolName);
+                    playTransientToolCall(`recent-${name}-${stat.lastStartedAt || Date.now()}-${nextCount}`, name, stat.lastStartedAt || Date.now(), avatarByToolName, stat.lastActionName);
                 }
                 if (!hasToolCountBaseline && nextCount > 0 && !activeToolNames.has(name)) {
                     const marker = Math.max(Number(stat.lastEndedAt || 0), Number(stat.lastStartedAt || 0));
                     if (marker && Date.now() - marker < recentReplayWindowMs) {
-                        playTransientToolCall(`initial-recent-${name}-${marker}-${nextCount}`, name, stat.lastStartedAt || marker, avatarByToolName);
+                        playTransientToolCall(`initial-recent-${name}-${marker}-${nextCount}`, name, stat.lastStartedAt || marker, avatarByToolName, stat.lastActionName);
                     }
                 }
                 lastToolCounts.set(name, nextCount);

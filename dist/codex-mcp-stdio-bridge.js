@@ -3,7 +3,7 @@
 const http = require('http');
 const https = require('https');
 
-const targetUrl = process.env.COCOS_MCP_URL || 'http://127.0.0.1:3000/mcp';
+const targetUrl = process.env.COCOS_MCP_URL || 'http://127.0.0.1:3300/mcp';
 
 function postToMcp(message) {
     return new Promise((resolve, reject) => {
@@ -31,7 +31,7 @@ function postToMcp(message) {
                 }
 
                 try {
-                    resolve(JSON.parse(text));
+                    resolve(parseMcpResponse(text));
                 } catch (error) {
                     reject(new Error(`MCP HTTP 返回不是 JSON：${text.slice(0, 300)}`));
                 }
@@ -42,6 +42,26 @@ function postToMcp(message) {
         request.write(body);
         request.end();
     });
+}
+
+function parseMcpResponse(text) {
+    if (!text) {
+        return null;
+    }
+    try {
+        return JSON.parse(text);
+    }
+    catch (_) {}
+
+    const dataLines = String(text).split(/\r?\n/)
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trim())
+        .filter(Boolean);
+    if (dataLines.length > 0) {
+        return JSON.parse(dataLines[dataLines.length - 1]);
+    }
+
+    throw new Error('invalid MCP response');
 }
 
 function writeResponse(response) {
