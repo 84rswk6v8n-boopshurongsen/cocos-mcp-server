@@ -15,6 +15,8 @@ const ACTIONS = [
     'get_node_info',
     'get_component_info',
     'get_component_detail',
+    'get_renderer_info',
+    'validate_material_runtime',
     'get_property_path',
     'call_component_method',
     'get_console_logs',
@@ -33,7 +35,7 @@ class RuntimeHandler {
                 'Cocos Web 运行态桥接工具，用于读取浏览器预览页中的运行时场景、节点、组件和基础统计。',
                 '需要可视化调试绘制时，先调用 open_injected_preview 打开系统外部浏览器自动注入 bridge；不要使用 Codex 内部浏览器承载调试绘制页面。',
                 '本工具只返回精简 JSON，不提供网页 UI。get_injection_code 仅作为特殊环境兜底，不作为默认流程。',
-                'Actions: get_injection_code, get_injected_preview_url, open_injected_preview, list_clients, select_client, clear_clients, check_support, wait_until_ready, get_scene_tree, find_node, find_nodes_by_component, get_node_info, get_component_info, get_component_detail, get_property_path, call_component_method, get_console_logs, set_node_active, set_node_transform, get_runtime_stats, analyze_frame, capture_frame.'
+                'Actions: get_injection_code, get_injected_preview_url, open_injected_preview, list_clients, select_client, clear_clients, check_support, wait_until_ready, get_scene_tree, find_node, find_nodes_by_component, get_node_info, get_component_info, get_component_detail, get_renderer_info, validate_material_runtime, get_property_path, call_component_method, get_console_logs, set_node_active, set_node_transform, get_runtime_stats, analyze_frame, capture_frame.'
             ].join('\n'),
             inputSchema: {
                 type: 'object',
@@ -103,6 +105,50 @@ class RuntimeHandler {
                         type: 'array',
                         items: { type: 'string' },
                         description: 'get_component_detail 要读取的属性名列表；不传则读取安全字段'
+                    },
+                    includeProperties: {
+                        type: 'boolean',
+                        description: 'get_renderer_info/analyze_frame material property summary switch'
+                    },
+                    includeTextures: {
+                        type: 'boolean',
+                        description: 'get_renderer_info/analyze_frame texture reference summary switch'
+                    },
+                    includePasses: {
+                        type: 'boolean',
+                        description: 'get_renderer_info pass/define summary switch'
+                    },
+                    materialSlot: {
+                        type: 'number',
+                        description: 'validate_material_runtime material slot index'
+                    },
+                    rendererEnabled: {
+                        type: 'boolean',
+                        description: 'validate_material_runtime expected renderer enabled state'
+                    },
+                    nodeActive: {
+                        type: 'boolean',
+                        description: 'validate_material_runtime expected node active state'
+                    },
+                    materialName: {
+                        type: 'string',
+                        description: 'validate_material_runtime expected material name'
+                    },
+                    materialUuid: {
+                        type: 'string',
+                        description: 'validate_material_runtime expected material uuid'
+                    },
+                    effectName: {
+                        type: 'string',
+                        description: 'validate_material_runtime expected effect/shader name'
+                    },
+                    expectedProperties: {
+                        type: 'object',
+                        description: 'validate_material_runtime expected material properties'
+                    },
+                    expectedTextures: {
+                        type: 'object',
+                        description: 'validate_material_runtime expected texture references'
                     },
                     includePrivate: {
                         type: 'boolean',

@@ -3,17 +3,21 @@
 const fs = require('fs');
 const path = require('path');
 const childProcess = require('child_process');
+const http = require('http');
+const net = require('net');
+const os = require('os');
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 
 class RuntimeBridgeManager {
     constructor(settings = {}) {
         this.clients = new Map();
         this.pendingCommands = new Map();
-        this.pollTimeoutMs = 25000;
+        this.pollTimeoutMs = 5000;
         this.commandTimeoutMs = 10000;
         this.staleClientMs = 60000;
         this.port = Number(settings.port) || 3300;
-        this.minimumBridgeVersion = '0.1.15';
+        this.minimumBridgeVersion = '0.1.19';
         this.activeClientId = null;
     }
 
@@ -37,11 +41,7 @@ class RuntimeBridgeManager {
     }
 
     getInjectedPreviewUrl(args = {}) {
-        const host = args.host || '127.0.0.1';
-        const port = Number(args.port) || this.port || 3300;
-        const previewUrl = this.getDefaultPreviewUrl(args);
-        const url = `http://${host}:${port}/runtime/preview?url=${encodeURIComponent(previewUrl)}`;
-        return args.cacheBust === false ? url : `${url}&t=${Date.now()}`;
+        return this.getDefaultPreviewUrl(args);
     }
 
     openExternalUrl(url) {
@@ -86,6 +86,296 @@ class RuntimeBridgeManager {
                     previewUrl,
                     bridgeUrl: this.getBridgeUrl(args)
                 }
+            };
+        }
+    }
+
+    findBrowserExecutable() {
+        if (process.platform !== 'win32') {
+            return null;
+        }
+        const candidates = [
+            path.join(process.env['PROGRAMFILES(X86)'] || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+            path.join(process.env.PROGRAMFILES || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+            path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+            path.join(process.env['PROGRAMFILES(X86)'] || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+            path.join(process.env.PROGRAMFILES || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+            path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'Application', 'chrome.exe')
+        ];
+        return candidates.find((item) => item && fs.existsSync(item)) || null;
+    }
+
+    launchDebugBrowser(previewUrl, args = {}) {
+        const debugPort = Number(args.debugPort) || 9231;
+        const userDataDir = args.userDataDir || path.join(os.tmpdir(), `cocos-mcp-runtime-browser-${debugPort}`);
+        const executable = args.browserPath || this.findBrowserExecutable();
+        const browserArgs = [
+            `--remote-debugging-port=${debugPort}`,
+            `--user-data-dir=${userDataDir}`,
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--new-window',
+            previewUrl
+        ];
+        if (executable) {
+            const child = childProcess.spawn(executable, browserArgs, {
+                detached: true,
+                stdio: 'ignore',
+                windowsHide: false
+            });
+            child.unref();
+            return { debugPort, userDataDir, executable, launchedBy: 'executable' };
+        }
+        if (process.platform === 'win32') {
+            const child = childProcess.spawn('cmd', ['/c', 'start', '', 'msedge', ...browserArgs], {
+                detached: true,
+                stdio: 'ignore',
+                windowsHide: false
+            });
+            child.unref();
+            return { debugPort, userDataDir, executable: 'msedge', launchedBy: 'cmd' };
+        }
+        this.openExternalUrl(previewUrl);
+        return { debugPort, userDataDir, executable: '', launchedBy: 'fallback-open', fallback: true };
+    }
+
+    httpGetJson(url, timeoutMs = 2000) {
+        return new Promise((resolve, reject) => {
+            const req = http.get(url, (res) => {
+                const chunks = [];
+                res.on('data', (chunk) => chunks.push(chunk));
+                res.on('end', () => {
+                    try {
+                        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
+            });
+            req.on('error', reject);
+            req.setTimeout(timeoutMs, () => req.destroy(new Error('CDP HTTP request timed out')));
+        });
+    }
+
+    sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async findCdpPage(debugPort, previewUrl, timeoutMs = 12000) {
+        const deadline = Date.now() + timeoutMs;
+        const previewPrefix = String(previewUrl || '').replace(/[?#].*$/, '').replace(/\/$/, '');
+        let lastPages = [];
+        while (Date.now() < deadline) {
+            try {
+                const pages = await this.httpGetJson(`http://127.0.0.1:${debugPort}/json/list`, 1500);
+                lastPages = Array.isArray(pages) ? pages : [];
+                const page = lastPages.find((item) => {
+                    const url = String(item && item.url || '').replace(/\/$/, '');
+                    return item && item.type === 'page' && url.startsWith(previewPrefix) && item.webSocketDebuggerUrl;
+                }) || lastPages.find((item) => item && item.type === 'page' && item.webSocketDebuggerUrl);
+                if (page) {
+                    return page;
+                }
+            } catch (_) {
+            }
+            await this.sleep(300);
+        }
+        throw new Error(`未找到可注入的浏览器预览页，已扫描 ${lastPages.length} 个调试页面。`);
+    }
+
+    tryReadWebSocketFrame(buffer) {
+        if (!buffer || buffer.length < 2) {
+            return null;
+        }
+        const opcode = buffer[0] & 0x0f;
+        let offset = 2;
+        let length = buffer[1] & 0x7f;
+        if (length === 126) {
+            if (buffer.length < 4) return null;
+            length = buffer.readUInt16BE(2);
+            offset = 4;
+        } else if (length === 127) {
+            if (buffer.length < 10) return null;
+            length = Number(buffer.readBigUInt64BE(2));
+            offset = 10;
+        }
+        const masked = !!(buffer[1] & 0x80);
+        let mask = null;
+        if (masked) {
+            if (buffer.length < offset + 4) return null;
+            mask = buffer.slice(offset, offset + 4);
+            offset += 4;
+        }
+        if (buffer.length < offset + length) {
+            return null;
+        }
+        const payload = Buffer.from(buffer.slice(offset, offset + length));
+        if (mask) {
+            for (let index = 0; index < payload.length; index++) {
+                payload[index] ^= mask[index % 4];
+            }
+        }
+        if (opcode === 8) {
+            return { text: '', rest: buffer.slice(offset + length), closed: true };
+        }
+        return { text: payload.toString('utf8'), rest: buffer.slice(offset + length) };
+    }
+
+    createWebSocketTextFrame(text) {
+        const payload = Buffer.from(text, 'utf8');
+        const mask = crypto.randomBytes(4);
+        let header;
+        if (payload.length < 126) {
+            header = Buffer.from([0x81, 0x80 | payload.length]);
+        } else if (payload.length < 65536) {
+            header = Buffer.alloc(4);
+            header[0] = 0x81;
+            header[1] = 0x80 | 126;
+            header.writeUInt16BE(payload.length, 2);
+        } else {
+            header = Buffer.alloc(10);
+            header[0] = 0x81;
+            header[1] = 0x80 | 127;
+            header.writeBigUInt64BE(BigInt(payload.length), 2);
+        }
+        const masked = Buffer.alloc(payload.length);
+        for (let index = 0; index < payload.length; index++) {
+            masked[index] = payload[index] ^ mask[index % 4];
+        }
+        return Buffer.concat([header, mask, masked]);
+    }
+
+    async cdpEvaluate(webSocketUrl, expression, timeoutMs = 8000) {
+        const url = new URL(webSocketUrl);
+        const key = crypto.randomBytes(16).toString('base64');
+        const socket = net.connect(Number(url.port) || 80, url.hostname);
+        socket.setTimeout(timeoutMs);
+        let buffer = Buffer.alloc(0);
+        let connected = false;
+        const waitForFrame = () => new Promise((resolve, reject) => {
+            const cleanup = () => {
+                socket.off('data', onData);
+                socket.off('error', onError);
+                socket.off('timeout', onTimeout);
+            };
+            const onError = (error) => {
+                cleanup();
+                reject(error);
+            };
+            const onTimeout = () => {
+                cleanup();
+                reject(new Error('CDP WebSocket timed out'));
+            };
+            const onData = (chunk) => {
+                buffer = Buffer.concat([buffer, chunk]);
+                if (!connected) {
+                    const text = buffer.toString('utf8');
+                    const headerEnd = text.indexOf('\r\n\r\n');
+                    if (headerEnd < 0) {
+                        return;
+                    }
+                    connected = true;
+                    buffer = buffer.slice(Buffer.byteLength(text.slice(0, headerEnd + 4)));
+                }
+                const frame = this.tryReadWebSocketFrame(buffer);
+                if (!frame) {
+                    return;
+                }
+                buffer = frame.rest;
+                cleanup();
+                resolve(frame.text);
+            };
+            socket.on('data', onData);
+            socket.on('error', onError);
+            socket.on('timeout', onTimeout);
+        });
+        await new Promise((resolve, reject) => {
+            socket.once('connect', resolve);
+            socket.once('error', reject);
+        });
+        socket.write([
+            `GET ${url.pathname}${url.search || ''} HTTP/1.1`,
+            `Host: ${url.host}`,
+            'Upgrade: websocket',
+            'Connection: Upgrade',
+            `Sec-WebSocket-Key: ${key}`,
+            'Sec-WebSocket-Version: 13',
+            '\r\n'
+        ].join('\r\n'));
+        await waitForFrame().catch(() => null);
+        const payload = JSON.stringify({
+            id: 1,
+            method: 'Runtime.evaluate',
+            params: {
+                expression,
+                awaitPromise: true,
+                returnByValue: true
+            }
+        });
+        socket.write(this.createWebSocketTextFrame(payload));
+        while (true) {
+            const text = await waitForFrame();
+            const message = JSON.parse(text);
+            if (message.id === 1) {
+                socket.end();
+                return message;
+            }
+        }
+    }
+
+    buildInjectionExpression(args = {}) {
+        const bridgeUrl = this.getBridgeUrl(args);
+        return [
+            '(function(){',
+            '  function inject(){',
+            '    var old = document.getElementById("cocos-mcp-runtime-bridge");',
+            '    if (old && old.parentNode) old.parentNode.removeChild(old);',
+            '    var s = document.createElement("script");',
+            '    s.id = "cocos-mcp-runtime-bridge";',
+            `    s.src = "${bridgeUrl}?t=" + Date.now();`,
+            '    (document.head || document.documentElement).appendChild(s);',
+            '    return { injected: true, url: location.href, readyState: document.readyState };',
+            '  }',
+            '  if (document.head || document.documentElement) return inject();',
+            '  document.addEventListener("DOMContentLoaded", inject, { once: true });',
+            '  return { injected: false, waiting: true, url: location.href, readyState: document.readyState };',
+            '})();'
+        ].join('\n');
+    }
+
+    async openInjectedPreview(args = {}) {
+        const injectedPreviewUrl = this.getInjectedPreviewUrl(args);
+        const previewUrl = this.getDefaultPreviewUrl(args);
+        const bridgeUrl = this.getBridgeUrl(args);
+        try {
+            const launchInfo = this.launchDebugBrowser(previewUrl, args);
+            if (launchInfo.fallback) {
+                return {
+                    success: false,
+                    message: '当前平台无法自动注入，请使用 get_injection_code 手动注入。',
+                    data: { injectedPreviewUrl, previewUrl, bridgeUrl, launchInfo }
+                };
+            }
+            const page = await this.findCdpPage(launchInfo.debugPort, previewUrl, Number(args.readyTimeoutMs) || 12000);
+            const evaluation = await this.cdpEvaluate(page.webSocketDebuggerUrl, this.buildInjectionExpression(args), 8000);
+            return {
+                success: true,
+                message: '已在外部浏览器打开原始 Cocos 预览页，并自动注入 runtime bridge。',
+                data: {
+                    injectedPreviewUrl,
+                    previewUrl,
+                    bridgeUrl,
+                    debugPort: launchInfo.debugPort,
+                    pageUrl: page.url,
+                    injected: evaluation && evaluation.result && evaluation.result.result
+                }
+            };
+        } catch (error) {
+            return {
+                success: false,
+                message: '打开原始预览页并自动注入 bridge 失败。',
+                error: error && error.message ? error.message : String(error),
+                data: { injectedPreviewUrl, previewUrl, bridgeUrl }
             };
         }
     }

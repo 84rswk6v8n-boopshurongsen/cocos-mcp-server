@@ -282,6 +282,11 @@ class MCPServer {
         }
 
         try {
+            if (pathname === "/" && req.method === "GET" && requestUrl.searchParams.has("__cocos_mcp_preview")) {
+                await this.handleRuntimePreviewPage(req, res, requestUrl);
+                return;
+            }
+
             if (pathname === "/health" && req.method === "GET") {
                 this.writeJson(res, 200, {
                     status: "ok",
@@ -639,6 +644,10 @@ class MCPServer {
             }
         }
 
+        if ((req.method === "GET" || req.method === "HEAD") && this.serveRuntimeInternalPrerequisite(res, pathname)) {
+            return;
+        }
+
         if (pathname === "/runtime/preview" && req.method === "GET") {
             await this.handleRuntimePreviewPage(req, res, requestUrl);
             return;
@@ -696,6 +705,11 @@ class MCPServer {
             return;
         }
 
+        if ((req.method === "GET" || req.method === "HEAD") && this.isRuntimePreviewRelativePassthroughPath(pathname)) {
+            await this.handleRuntimePreviewRelativePassthrough(req, res, pathname, requestUrl);
+            return;
+        }
+
         this.writeJson(res, 404, {
             success: false,
             error: "未找到运行态接口。"
@@ -703,7 +717,7 @@ class MCPServer {
     }
 
     async handleRuntimePreviewPage(req, res, requestUrl) {
-        const previewUrl = requestUrl.searchParams.get("url") || "http://127.0.0.1:7456/";
+        const previewUrl = requestUrl.searchParams.get("url") || requestUrl.searchParams.get("__cocos_mcp_preview") || "http://127.0.0.1:7456/";
         const targetUrl = this.normalizeRuntimePreviewUrl(previewUrl);
         if (!targetUrl) {
             this.writeJson(res, 400, {
@@ -751,6 +765,32 @@ class MCPServer {
             body,
             headers: req.headers
         });
+    }
+
+    isRuntimePreviewRelativePassthroughPath(pathname) {
+        if (!pathname.startsWith("/runtime/")) {
+            return false;
+        }
+        const strippedPath = pathname.slice("/runtime".length) || "/";
+        return this.isRuntimePreviewPassthroughPath(strippedPath);
+    }
+
+    async handleRuntimePreviewRelativePassthrough(req, res, pathname, requestUrl) {
+        const strippedPath = pathname.slice("/runtime".length) || "/";
+        await this.handleRuntimePreviewPassthrough(req, res, strippedPath, requestUrl);
+    }
+
+    serveRuntimeInternalPrerequisite(res, pathname) {
+        if (pathname !== "/runtime/assets/internal/index.js" && pathname !== "/assets/internal/index.js") {
+            return false;
+        }
+        const script = 'System.register("virtual:///prerequisite-imports/internal", [], function () { "use strict"; return { setters: [], execute: function () {} }; });';
+        res.writeHead(200, {
+            "Content-Type": "application/javascript; charset=utf-8",
+            "Cache-Control": "no-cache"
+        });
+        res.end(script);
+        return true;
     }
 
     handleRuntimePreviewUpgrade(req, socket, head) {
@@ -917,18 +957,52 @@ class MCPServer {
     }
 
     injectRuntimeBridgeIntoHtml(html, targetUrl) {
-        const proxyBase = this.getRuntimePreviewProxyBase(targetUrl);
-        const injection = [
-            `<base href="${proxyBase}">`,
-            `<script id="cocos-mcp-runtime-bridge" src="/runtime/bridge.js?t=${Date.now()}"></script>`
+        const bridgeUrl = `/runtime/bridge.js?t=${Date.now()}`;
+        const earlyProbe = [
+            `<script id="cocos-mcp-runtime-early-probe">`,
+            `(function(){`,
+            `if(window.__cocosMcpEarlyErrors)return;`,
+            `window.__cocosMcpEarlyErrors=[];`,
+            `window.addEventListener('error',function(e){`,
+            `var t=e&&e.target;`,
+            `window.__cocosMcpEarlyErrors.push({type:t&&t!==window?'resource-error':'window-error',message:e&&e.message||'',filename:e&&e.filename||'',lineno:e&&e.lineno||0,colno:e&&e.colno||0,target:t&&t!==window?(t.src||t.href||t.tagName||''):''});`,
+            `},true);`,
+            `window.addEventListener('unhandledrejection',function(e){`,
+            `window.__cocosMcpEarlyErrors.push({type:'unhandledrejection',reason:e&&e.reason?String(e.reason):''});`,
+            `});`,
+            `})();`,
+            `</script>`
         ].join("");
-        if (/<head[^>]*>/i.test(html)) {
-            return html.replace(/<head([^>]*)>/i, `<head$1>${injection}`);
+        const loader = [
+            `<script id="cocos-mcp-runtime-bridge-loader">`,
+            `(function(){`,
+            `var loaded=false;`,
+            `function inject(){`,
+            `if(loaded||document.getElementById('cocos-mcp-runtime-bridge'))return;`,
+            `loaded=true;`,
+            `var script=document.createElement('script');`,
+            `script.id='cocos-mcp-runtime-bridge';`,
+            `script.src='${bridgeUrl}';`,
+            `(document.head||document.documentElement).appendChild(script);`,
+            `}`,
+            `if(document.readyState==='complete'){setTimeout(inject,0);}else{window.addEventListener('load',inject,{once:true});setTimeout(inject,6000);}`,
+            `})();`,
+            `</script>`
+        ].join("");
+        let output = html;
+        const rootBase = `<base href="/">`;
+        if (/<head[^>]*>/i.test(output)) {
+            output = output.replace(/<head([^>]*)>/i, `<head$1>${rootBase}${earlyProbe}`);
+        } else {
+            output = `${rootBase}${earlyProbe}${output}`;
         }
-        if (/<body[^>]*>/i.test(html)) {
-            return html.replace(/<body([^>]*)>/i, `<body$1>${injection}`);
+        if (/<\/body>/i.test(output)) {
+            return output.replace(/<\/body>/i, `${loader}</body>`);
         }
-        return `${injection}${html}`;
+        if (/<body[^>]*>/i.test(output)) {
+            return output.replace(/<body([^>]*)>/i, `<body$1>${loader}`);
+        }
+        return `${output}${loader}`;
     }
 
     async proxyRuntimePreviewResource(res, targetUrl, forceInjectHtml, options = {}) {

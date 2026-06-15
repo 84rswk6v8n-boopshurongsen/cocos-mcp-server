@@ -591,7 +591,15 @@ module.exports = Editor.Panel.define({
             }
         };
 
-        const showToolTooltip = (item, name, description) => {
+        const formatToolDescription = (description, actions) => {
+            const parts = [description || '\u65e0\u8bf4\u660e'];
+            if (Array.isArray(actions) && actions.length > 0) {
+                parts.push(`\u53ef\u7528\u64cd\u4f5c\uff1a${actions.join(' / ')}`);
+            }
+            return parts.join('\n');
+        };
+
+        const showToolTooltip = (item, name, description, actions) => {
             const tooltip = this.$.toolTooltip;
             if (!tooltip) {
                 return;
@@ -604,7 +612,7 @@ module.exports = Editor.Panel.define({
             activeToolItem = item;
             item.classList.add('active');
             setText(this.$.toolTooltipTitle, name || '-');
-            setText(this.$.toolTooltipDesc, description || '\u65e0\u8bf4\u660e');
+            setText(this.$.toolTooltipDesc, formatToolDescription(description, actions));
 
             tooltip.classList.add('show');
             tooltip.style.left = '0px';
@@ -627,11 +635,11 @@ module.exports = Editor.Panel.define({
             tooltip.style.top = `${Math.max(margin, top)}px`;
         };
 
-        const bindToolTooltip = (item, name, description) => {
-            item.setAttribute('title', description || '\u65e0\u8bf4\u660e');
+        const bindToolTooltip = (item, name, description, actions) => {
+            item.setAttribute('title', formatToolDescription(description, actions));
             item.addEventListener('click', (event) => {
                 event.stopPropagation();
-                showToolTooltip(item, name, description);
+                showToolTooltip(item, name, description, actions);
             });
         };
 
@@ -642,7 +650,8 @@ module.exports = Editor.Panel.define({
             const source = result && result.source ? result.source : 'MCP';
             knownTools = tools.map((tool) => ({
                 name: tool.name || tool.toolName || '-',
-                description: tool.description || ''
+                description: tool.description || '',
+                actions: Array.isArray(tool.actions) ? tool.actions : []
             }));
             renderToolActivity(currentStatus);
 
@@ -669,9 +678,21 @@ module.exports = Editor.Panel.define({
                 desc.className = 'tool-desc';
                 desc.textContent = tool.description || '\u65e0\u8bf4\u660e';
 
-                bindToolTooltip(item, name.textContent, desc.textContent);
-                item.appendChild(name);
-                item.appendChild(desc);
+                const actions = Array.isArray(tool.actions) ? tool.actions : [];
+                if (actions.length > 0) {
+                    const actionText = document.createElement('div');
+                    actionText.className = 'tool-desc';
+                    actionText.textContent = `\u64cd\u4f5c\uff1a${actions.slice(0, 6).join(' / ')}${actions.length > 6 ? ' ...' : ''}`;
+                    item.appendChild(name);
+                    item.appendChild(desc);
+                    item.appendChild(actionText);
+                }
+                else {
+                    item.appendChild(name);
+                    item.appendChild(desc);
+                }
+
+                bindToolTooltip(item, name.textContent, desc.textContent, actions);
                 this.$.toolsList.appendChild(item);
             }
 
@@ -687,7 +708,7 @@ module.exports = Editor.Panel.define({
                 desc.className = 'tool-desc';
                 desc.textContent = skill.description || '\u65e0\u8bf4\u660e';
 
-                bindToolTooltip(item, name.textContent, desc.textContent);
+                bindToolTooltip(item, name.textContent, desc.textContent, []);
                 item.appendChild(name);
                 item.appendChild(desc);
                 this.$.toolsList.appendChild(item);

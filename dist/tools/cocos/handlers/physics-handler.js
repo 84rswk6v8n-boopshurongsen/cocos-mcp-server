@@ -465,7 +465,7 @@ class PhysicsHandler {
                     },
                     live: {
                         type: 'boolean',
-                        description: 'debug_draw_ray/debug_draw_collider/debug_draw_all_colliders 是否每帧实时重新采样，移动节点调试建议设为 true，默认 false'
+                        description: '是否每帧实时重新采样。debug_draw_ray 默认 false；debug_draw_collider/debug_draw_all_colliders 默认 true，移动节点调试建议保持 true'
                     },
                     queryTrigger: {
                         type: 'boolean',

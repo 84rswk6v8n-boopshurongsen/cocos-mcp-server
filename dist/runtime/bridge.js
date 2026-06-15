@@ -1,7 +1,7 @@
 'use strict';
 
 (function () {
-    const VERSION = '0.1.15';
+    const VERSION = '0.1.19';
     const currentScript = document.currentScript;
     const scriptUrl = currentScript && currentScript.src ? currentScript.src : '';
     const baseUrl = scriptUrl ? scriptUrl.replace(/\/runtime\/bridge\.js(?:\?.*)?$/, '') : 'http://127.0.0.1:3300';
@@ -89,7 +89,7 @@
                 return String(item);
             }
         }).join(' ');
-        const finalText = text && text.trim() ? text : `[${level}] 空日志内容`;
+        const finalText = text && text.trim() ? text : `[${level}] empty log content`;
         consoleLogs.push({
             index: consoleLogs.length + 1,
             level,
@@ -140,6 +140,59 @@
         defineConsoleHidden(window.console, '__cocosMcpOriginals', originals);
         defineConsoleHidden(window.console, '__cocosMcpCaptured', true);
         defineConsoleHidden(window.console, '__cocosMcpCaptureVersion', VERSION);
+    }
+
+    function installRuntimeErrorCapture() {
+        if (window.__cocosMcpRuntimeErrorCaptureVersion === VERSION) {
+            return;
+        }
+        defineConsoleHidden(window, '__cocosMcpRuntimeErrorCaptureVersion', VERSION);
+        window.addEventListener('error', function (event) {
+            try {
+                const target = event && event.target;
+                const resource = target && target !== window ? {
+                    tagName: target.tagName || '',
+                    src: target.src || '',
+                    href: target.href || ''
+                } : null;
+                recordConsole('error', [{
+                    type: resource ? 'resource-error' : 'window-error',
+                    message: event && event.message || '',
+                    filename: event && event.filename || '',
+                    lineno: event && event.lineno || 0,
+                    colno: event && event.colno || 0,
+                    resource,
+                    error: event && event.error ? {
+                        name: event.error.name || '',
+                        message: event.error.message || '',
+                        stack: event.error.stack || ''
+                    } : null
+                }]);
+            } catch (_) {
+            }
+        }, true);
+        window.addEventListener('unhandledrejection', function (event) {
+            try {
+                recordConsole('error', [{
+                    type: 'unhandledrejection',
+                    reason: safeConsoleArg(event && event.reason)
+                }]);
+            } catch (_) {
+            }
+        });
+    }
+
+    function flushEarlyRuntimeErrors() {
+        try {
+            const errors = Array.isArray(window.__cocosMcpEarlyErrors) ? window.__cocosMcpEarlyErrors : [];
+            for (const item of errors.splice(0, errors.length)) {
+                recordConsole('error', [{
+                    type: 'early-runtime-error',
+                    detail: item
+                }]);
+            }
+        } catch (_) {
+        }
     }
 
     function getCc() {
@@ -1458,6 +1511,86 @@
         return pairs.map((pair) => [points[pair[0]], points[pair[1]]]);
     }
 
+    function buildWorldBoxEdges(min, max) {
+        min = vec3From(min);
+        max = vec3From(max, min);
+        const points = [
+            { x: min.x, y: min.y, z: min.z },
+            { x: max.x, y: min.y, z: min.z },
+            { x: max.x, y: max.y, z: min.z },
+            { x: min.x, y: max.y, z: min.z },
+            { x: min.x, y: min.y, z: max.z },
+            { x: max.x, y: min.y, z: max.z },
+            { x: max.x, y: max.y, z: max.z },
+            { x: min.x, y: max.y, z: max.z }
+        ];
+        const pairs = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+        return pairs.map((pair) => [points[pair[0]], points[pair[1]]]);
+    }
+
+    function readBoundsEdges(bounds) {
+        if (!bounds || typeof bounds !== 'object') {
+            return null;
+        }
+        const min = toPlainVec(bounds.min || bounds.minimum || bounds.lowerBound || bounds.lower);
+        const max = toPlainVec(bounds.max || bounds.maximum || bounds.upperBound || bounds.upper);
+        if (min && max) {
+            return buildWorldBoxEdges(min, max);
+        }
+        const center = toPlainVec(bounds.center || bounds._center);
+        const half = toPlainVec(bounds.halfExtents || bounds.extents || bounds._halfExtents || bounds._extents);
+        if (center && half) {
+            return buildWorldBoxEdges(
+                { x: center.x - half.x, y: center.y - half.y, z: center.z - half.z },
+                { x: center.x + half.x, y: center.y + half.y, z: center.z + half.z }
+            );
+        }
+        return null;
+    }
+
+    function readColliderBoundsEdges(component) {
+        const keys = ['worldBounds', '_worldBounds', 'bounds', '_bounds', 'aabb', '_aabb', 'boundingBox', '_boundingBox'];
+        for (const key of keys) {
+            try {
+                const edges = readBoundsEdges(component && component[key]);
+                if (edges && edges.length) {
+                    return edges;
+                }
+            } catch (_) {}
+        }
+        try {
+            const shape = component && (component.shape || component._shape);
+            const edges = readBoundsEdges(shape && (shape.worldBounds || shape._worldBounds || shape.bounds || shape._bounds || shape.aabb || shape._aabb));
+            if (edges && edges.length) {
+                return edges;
+            }
+        } catch (_) {}
+        return null;
+    }
+
+    function buildPolygonEdges(node, center, points) {
+        if (!Array.isArray(points) || points.length < 2) {
+            return null;
+        }
+        center = vec3From(center);
+        const worldPoints = points
+            .map((point) => vec3From(point, null))
+            .filter(Boolean)
+            .map((point) => transformLocalPoint(node, {
+                x: center.x + point.x,
+                y: center.y + point.y,
+                z: center.z + (point.z || 0)
+            }));
+        if (worldPoints.length < 2) {
+            return null;
+        }
+        const edges = [];
+        for (let i = 0; i < worldPoints.length; i++) {
+            edges.push([worldPoints[i], worldPoints[(i + 1) % worldPoints.length]]);
+        }
+        return edges;
+    }
+
     function buildSphereEdges(node, center, radius) {
         center = vec3From(center);
         radius = Number(radius) || 0.5;
@@ -1481,23 +1614,274 @@
         return edges;
     }
 
+    function axisInfo(direction) {
+        const index = Number(direction) || 0;
+        if (index === 0) {
+            return { main: 'x', a: 'y', b: 'z' };
+        }
+        if (index === 2) {
+            return { main: 'z', a: 'x', b: 'y' };
+        }
+        return { main: 'y', a: 'x', b: 'z' };
+    }
+
+    function buildCapsuleEdges(node, center, radius, height, direction) {
+        center = vec3From(center);
+        radius = Math.max(0.01, Number(radius) || 0.5);
+        height = Math.max(0, Number(height) || radius * 2);
+        const axis = axisInfo(direction);
+        const halfCylinder = height / 2;
+        const segments = 24;
+        const edges = [];
+        const makePoint = (main, a, b) => {
+            const local = { x: center.x, y: center.y, z: center.z };
+            local[axis.main] += main;
+            local[axis.a] += a;
+            local[axis.b] += b;
+            return transformLocalPoint(node, local);
+        };
+        const ring = (main) => {
+            const points = [];
+            for (let i = 0; i < segments; i++) {
+                const angle = Math.PI * 2 * i / segments;
+                points.push(makePoint(main, Math.cos(angle) * radius, Math.sin(angle) * radius));
+            }
+            for (let i = 0; i < points.length; i++) {
+                edges.push([points[i], points[(i + 1) % points.length]]);
+            }
+            return points;
+        };
+        const top = ring(halfCylinder);
+        const bottom = ring(-halfCylinder);
+        for (const i of [0, 6, 12, 18]) {
+            edges.push([top[i], bottom[i]]);
+        }
+        for (const plane of [axis.a, axis.b]) {
+            for (const sign of [-1, 1]) {
+                let previous = null;
+                for (let i = 0; i <= segments / 2; i++) {
+                    const angle = Math.PI * i / (segments / 2);
+                    const main = halfCylinder + Math.sin(angle) * radius;
+                    const side = Math.cos(angle) * radius * sign;
+                    const local = { x: center.x, y: center.y, z: center.z };
+                    local[axis.main] += main;
+                    local[plane] += side;
+                    const world = transformLocalPoint(node, local);
+                    if (previous) {
+                        edges.push([previous, world]);
+                    }
+                    previous = world;
+                }
+                previous = null;
+                for (let i = 0; i <= segments / 2; i++) {
+                    const angle = Math.PI * i / (segments / 2);
+                    const main = -halfCylinder - Math.sin(angle) * radius;
+                    const side = Math.cos(angle) * radius * sign;
+                    const local = { x: center.x, y: center.y, z: center.z };
+                    local[axis.main] += main;
+                    local[plane] += side;
+                    const world = transformLocalPoint(node, local);
+                    if (previous) {
+                        edges.push([previous, world]);
+                    }
+                    previous = world;
+                }
+            }
+        }
+        return edges;
+    }
+
+    function readMeshFromCollider(component, node) {
+        const candidates = [
+            component && component.mesh,
+            component && component._mesh,
+            component && component.sharedMesh,
+            component && component._sharedMesh,
+            component && component.model && component.model.mesh,
+            component && component._model && component._model.mesh
+        ];
+        try {
+            for (const renderer of getComponents(node)) {
+                if (componentKind(getComponentType(renderer)) === 'renderer') {
+                    candidates.push(renderer.mesh, renderer._mesh, renderer.model && renderer.model.mesh, renderer._model && renderer._model.mesh);
+                }
+            }
+        } catch (_) {}
+        return candidates.find((item) => item && typeof item === 'object') || null;
+    }
+
+    function readMeshPositions(mesh) {
+        const cc = getCc();
+        const attrNames = [
+            cc && cc.gfx && cc.gfx.AttributeName && cc.gfx.AttributeName.ATTR_POSITION,
+            'a_position',
+            'position',
+            'POSITION'
+        ].filter(Boolean);
+        if (mesh && typeof mesh.readAttribute === 'function') {
+            for (let primitive = 0; primitive < 8; primitive++) {
+                for (const attr of attrNames) {
+                    try {
+                        const positions = mesh.readAttribute(primitive, attr);
+                        if (positions && positions.length) {
+                            return { primitive, positions };
+                        }
+                    } catch (_) {}
+                }
+            }
+        }
+        for (const key of ['positions', '_positions', 'vertices', '_vertices']) {
+            try {
+                const positions = mesh && mesh[key];
+                if (positions && positions.length) {
+                    return { primitive: 0, positions };
+                }
+            } catch (_) {}
+        }
+        return null;
+    }
+
+    function readMeshIndices(mesh, primitive) {
+        if (mesh && typeof mesh.readIndices === 'function') {
+            try {
+                const indices = mesh.readIndices(primitive || 0);
+                if (indices && indices.length) {
+                    return Array.from(indices);
+                }
+            } catch (_) {}
+        }
+        for (const key of ['indices', '_indices']) {
+            try {
+                const indices = mesh && mesh[key];
+                if (indices && indices.length) {
+                    return Array.from(indices);
+                }
+            } catch (_) {}
+        }
+        return null;
+    }
+
+    function meshPositionAt(positions, index) {
+        const value = positions[index];
+        if (value && typeof value === 'object') {
+            return vec3From(value, null);
+        }
+        const offset = index * 3;
+        if (positions.length >= offset + 3) {
+            return {
+                x: Number(positions[offset]) || 0,
+                y: Number(positions[offset + 1]) || 0,
+                z: Number(positions[offset + 2]) || 0
+            };
+        }
+        return null;
+    }
+
+    function buildMeshEdges(node, center, component, args) {
+        const mesh = readMeshFromCollider(component, node);
+        const read = readMeshPositions(mesh);
+        if (!read || !read.positions || !read.positions.length) {
+            return null;
+        }
+        center = vec3From(center);
+        const requestedMaxEdges = Number(args && (args.meshMaxEdges || args.maxEdges));
+        const maxEdges = Math.max(12, Math.min(requestedMaxEdges || 8000, 20000));
+        const indices = readMeshIndices(mesh, read.primitive);
+        const edgeKeys = new Set();
+        const edges = [];
+        const addEdge = (a, b) => {
+            if (a === b || a < 0 || b < 0) {
+                return;
+            }
+            const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+            if (edgeKeys.has(key) || edges.length >= maxEdges) {
+                return;
+            }
+            const pa = meshPositionAt(read.positions, a);
+            const pb = meshPositionAt(read.positions, b);
+            if (!pa || !pb) {
+                return;
+            }
+            edgeKeys.add(key);
+            edges.push([
+                transformLocalPoint(node, { x: pa.x + center.x, y: pa.y + center.y, z: pa.z + center.z }),
+                transformLocalPoint(node, { x: pb.x + center.x, y: pb.y + center.y, z: pb.z + center.z })
+            ]);
+        };
+        if (indices && indices.length >= 3) {
+            for (let i = 0; i + 2 < indices.length && edges.length < maxEdges; i += 3) {
+                addEdge(indices[i], indices[i + 1]);
+                addEdge(indices[i + 1], indices[i + 2]);
+                addEdge(indices[i + 2], indices[i]);
+            }
+        }
+        else {
+            const vertexCount = Math.floor(read.positions.length / 3);
+            for (let i = 0; i + 2 < vertexCount && edges.length < maxEdges; i += 3) {
+                addEdge(i, i + 1);
+                addEdge(i + 1, i + 2);
+                addEdge(i + 2, i);
+            }
+        }
+        if (edges.length) {
+            edges.meshInfo = {
+                edgeCount: edges.length,
+                maxEdges,
+                truncated: edgeKeys.size >= maxEdges,
+                vertexCount: Math.floor(read.positions.length / 3),
+                indexCount: indices ? indices.length : 0
+            };
+        }
+        return edges.length ? edges : null;
+    }
+
     function buildColliderDrawing(item, component, args) {
         const type = getComponentType(component);
         const center = readComponentValue(component, 'center', '_center', { x: 0, y: 0, z: 0 });
         let edges = [];
-        if (/SphereCollider/i.test(type) || /CircleCollider/i.test(type)) {
-            edges = buildSphereEdges(item.node, center, readComponentValue(component, 'radius', '_radius', 0.5));
+        let shapeSource = '';
+        if (/MeshCollider/i.test(type)) {
+            edges = buildMeshEdges(item.node, center, component, args) || [];
+            shapeSource = edges.length ? 'mesh' : '';
         }
-        else {
+        const meshInfo = edges && edges.meshInfo || null;
+        if (!edges.length && /CapsuleCollider/i.test(type)) {
+            const radius = readComponentValue(component, 'radius', '_radius', 0.5);
+            const height = readComponentValue(component, 'cylinderHeight', '_cylinderHeight', readComponentValue(component, 'height', '_height', radius * 2));
+            const direction = readComponentValue(component, 'direction', '_direction', 1);
+            edges = buildCapsuleEdges(item.node, center, radius, height, direction);
+            shapeSource = 'capsule';
+        }
+        if (!edges.length && (/SphereCollider/i.test(type) || /CircleCollider/i.test(type))) {
+            edges = buildSphereEdges(item.node, center, readComponentValue(component, 'radius', '_radius', 0.5));
+            shapeSource = 'sphere';
+        }
+        if (!edges.length) {
             const size = readComponentValue(component, 'size', '_size', null);
             if (size) {
                 edges = buildBoxEdges(item.node, center, size);
+                shapeSource = 'box';
             }
-            else {
-                const radius = Number(readComponentValue(component, 'radius', '_radius', 0.5)) || 0.5;
-                const height = Number(readComponentValue(component, 'cylinderHeight', '_cylinderHeight', readComponentValue(component, 'height', '_height', radius * 2))) || radius * 2;
-                edges = buildBoxEdges(item.node, center, { x: radius * 2, y: height, z: radius * 2 });
+        }
+        if (!edges.length) {
+            const polygonEdges = buildPolygonEdges(item.node, center, readComponentValue(component, 'points', '_points', null));
+            if (polygonEdges && polygonEdges.length) {
+                edges = polygonEdges;
+                shapeSource = 'polygon';
             }
+        }
+        if (!edges.length) {
+            const boundsEdges = readColliderBoundsEdges(component);
+            if (boundsEdges && boundsEdges.length) {
+                edges = boundsEdges;
+                shapeSource = 'bounds';
+            }
+        }
+        if (!edges.length) {
+            const radius = Number(readComponentValue(component, 'radius', '_radius', 0.5)) || 0.5;
+            const height = Number(readComponentValue(component, 'cylinderHeight', '_cylinderHeight', readComponentValue(component, 'height', '_height', radius * 2))) || radius * 2;
+            edges = buildBoxEdges(item.node, center, { x: radius * 2, y: height, z: radius * 2 });
+            shapeSource = 'fallbackBox';
         }
         const isTrigger = !!readComponentValue(component, 'isTrigger', '_isTrigger', false);
         const worldCenter = transformLocalPoint(item.node, vec3From(center));
@@ -1507,6 +1891,8 @@
             nodeRef: getNodeUuid(item.node) || item.path,
             componentRef: getComponentUuid(component) || type,
             componentType: type,
+            shapeSource,
+            meshInfo,
             center: worldCenter,
             labelWorld: worldCenter,
             label: args && args.showLabel === false ? '' : `${item.path} ${type.split('.').pop()}`,
@@ -1755,6 +2141,7 @@
     }
 
     function debugDrawCollider(args) {
+        const live = args.live !== false;
         const found = findNode(args.node || args.query || args.path || args.uuid);
         if (!found) {
             return { success: false, error: `未找到节点：${args.node || args.query || args.path || args.uuid || ''}` };
@@ -1773,15 +2160,24 @@
         }
         const drawings = colliders.map((component) => addDebugDrawing(Object.assign(
             buildColliderDrawing(found, component, args),
-            { live: !!args.live, sourceArgs: args.live ? Object.assign({}, args) : null }
+            { live, sourceArgs: live ? Object.assign({}, args) : null }
         ), args));
         return {
             success: true,
             message: '已绘制节点碰撞体。',
             data: {
                 node: found.path,
+                live,
                 drawn: drawings.length,
                 drawingIds: drawings.map((item) => item.id),
+                drawings: drawings.map((item) => ({
+                    id: item.id,
+                    node: item.node,
+                    componentType: item.componentType,
+                    shapeSource: item.shapeSource,
+                    meshInfo: item.meshInfo || null,
+                    live: !!item.live
+                })),
                 colliders: colliders.map(componentSummary),
                 totalDrawings: debugDrawState.drawings.length
             }
@@ -1789,6 +2185,7 @@
     }
 
     function debugDrawAllColliders(args) {
+        const live = args.live !== false;
         const maxCount = Math.max(1, Math.min(Number(args.maxCount || args.maxNodes) || 200, 1000));
         const includeInactive = !!args.includeInactive;
         const rootRef = args.rootNode || '';
@@ -1818,7 +2215,7 @@
                 }
                 drawings.push(addDebugDrawing(Object.assign(
                     buildColliderDrawing(item, component, args),
-                    { live: !!args.live, sourceArgs: args.live ? Object.assign({}, args) : null }
+                    { live, sourceArgs: live ? Object.assign({}, args) : null }
                 ), args));
             }
             if (drawings.length >= maxCount) {
@@ -1830,9 +2227,18 @@
             message: '已绘制运行场景中的碰撞体。',
             data: {
                 drawn: drawings.length,
+                live,
                 maxCount,
                 skipped,
                 drawingIds: drawings.map((item) => item.id),
+                drawings: drawings.map((item) => ({
+                    id: item.id,
+                    node: item.node,
+                    componentType: item.componentType,
+                    shapeSource: item.shapeSource,
+                    meshInfo: item.meshInfo || null,
+                    live: !!item.live
+                })),
                 totalDrawings: debugDrawState.drawings.length
             }
         };
@@ -2266,7 +2672,207 @@
         return 'script';
     }
 
-    function readMaterials(component) {
+    const MATERIAL_PROPERTY_KEYS = [
+        'mainColor', 'albedo', 'albedoScale', 'emissive', 'emissiveScale',
+        'diffuseColor', 'specularColor', 'tintColor', 'color',
+        'roughness', 'metallic', 'alphaThreshold', 'opacity', 'tilingOffset'
+    ];
+    const MATERIAL_TEXTURE_KEYS = [
+        'mainTexture', 'albedoMap', 'diffuseMap', 'normalMap', 'emissiveMap',
+        'metallicRoughnessMap', 'occlusionMap', 'specularMap', 'roughnessMap'
+    ];
+
+    function shortClassName(value) {
+        return String(value && value.constructor && (value.constructor.__classname__ || value.constructor.name) || '');
+    }
+
+    function readAssetName(value) {
+        return String(value && (value.name || value._name || value._native || value._url || value.url) || '');
+    }
+
+    function readEffectInfo(material) {
+        const candidates = [
+            material && material.effectAsset,
+            material && material._effectAsset,
+            material && material.effect,
+            material && material._effect,
+            material && material._effectInfo
+        ];
+        for (const effect of candidates) {
+            if (!effect) {
+                continue;
+            }
+            const id = stableAssetId(effect);
+            const name = readAssetName(effect) || String(effect.name || effect._name || effect._uuid || '');
+            if (id || name) {
+                return {
+                    id,
+                    name,
+                    type: shortClassName(effect)
+                };
+            }
+        }
+        return {
+            id: '',
+            name: String(material && (material.effectName || material._effectName || material.shaderName || material._shaderName) || ''),
+            type: ''
+        };
+    }
+
+    function readTextureSummary(value) {
+        if (!value || typeof value !== 'object') {
+            return null;
+        }
+        const id = stableAssetId(value);
+        const name = readAssetName(value);
+        const width = Number(value.width || value._width || value._texture && value._texture.width) || null;
+        const height = Number(value.height || value._height || value._texture && value._texture.height) || null;
+        if (!id && !name && !width && !height) {
+            return null;
+        }
+        return {
+            id,
+            name,
+            type: shortClassName(value),
+            width,
+            height
+        };
+    }
+
+    function readMaterialProperty(material, key) {
+        try {
+            if (material && typeof material.getProperty === 'function') {
+                const value = material.getProperty(key);
+                if (value !== undefined) {
+                    return value;
+                }
+            }
+        } catch (_) {
+        }
+        for (const sourceKey of ['_props', '_properties', 'properties']) {
+            try {
+                const source = material && material[sourceKey];
+                if (source && source[key] !== undefined) {
+                    return source[key];
+                }
+            } catch (_) {
+            }
+        }
+        try {
+            if (material && material[key] !== undefined) {
+                return material[key];
+            }
+        } catch (_) {
+        }
+        return undefined;
+    }
+
+    function readMaterialProperties(material, options) {
+        if (options && options.includeProperties === false) {
+            return {};
+        }
+        const props = {};
+        const keys = new Set(MATERIAL_PROPERTY_KEYS);
+        if (Array.isArray(options && options.props)) {
+            for (const key of options.props) {
+                keys.add(key);
+            }
+        }
+        for (const key of keys) {
+            const value = readMaterialProperty(material, key);
+            if (value !== undefined && value !== null) {
+                props[key] = safeValue(value, 0, new WeakSet(), { maxDepth: 1, maxArrayLength: 8 });
+            }
+        }
+        return props;
+    }
+
+    function readMaterialTextures(material, options) {
+        if (options && options.includeTextures === false) {
+            return {};
+        }
+        const textures = {};
+        const keys = new Set(MATERIAL_TEXTURE_KEYS);
+        if (Array.isArray(options && options.textureProps)) {
+            for (const key of options.textureProps) {
+                keys.add(key);
+            }
+        }
+        for (const key of keys) {
+            const value = readMaterialProperty(material, key);
+            const texture = readTextureSummary(value);
+            if (texture) {
+                textures[key] = texture;
+            }
+        }
+        return textures;
+    }
+
+    function readPassDefines(pass) {
+        const defines = {};
+        for (const key of ['defines', '_defines', '_macroPatches', 'macroPatches']) {
+            try {
+                const value = pass && pass[key];
+                if (!value) {
+                    continue;
+                }
+                if (Array.isArray(value)) {
+                    defines[key] = value.slice(0, 20).map((item) => safeValue(item, 0, new WeakSet(), { maxDepth: 1, maxArrayLength: 8 }));
+                } else if (typeof value === 'object') {
+                    for (const [defineKey, defineValue] of Object.entries(value).slice(0, 40)) {
+                        defines[defineKey] = safeValue(defineValue, 0, new WeakSet(), { maxDepth: 1, maxArrayLength: 8 });
+                    }
+                }
+            } catch (_) {
+            }
+        }
+        return defines;
+    }
+
+    function readMaterialPasses(material, options) {
+        if (!(options && options.includePasses)) {
+            return [];
+        }
+        const passes = [];
+        const candidates = [];
+        for (const key of ['passes', '_passes']) {
+            try {
+                const value = material && material[key];
+                if (Array.isArray(value)) {
+                    candidates.push(...value);
+                }
+            } catch (_) {
+            }
+        }
+        return candidates.slice(0, 8).map((pass, index) => ({
+            index,
+            type: shortClassName(pass),
+            phase: String(pass && (pass.phase || pass._phase || '') || ''),
+            program: String(pass && (pass.program || pass._program || pass._programName || '') || ''),
+            defines: readPassDefines(pass)
+        }));
+    }
+
+    function readMaterialSummary(material, slot, options) {
+        const id = stableAssetId(material) || `material:${slot}`;
+        const effect = readEffectInfo(material);
+        const properties = readMaterialProperties(material, options || {});
+        const textures = readMaterialTextures(material, options || {});
+        return {
+            slot,
+            id,
+            uuid: String(material && (material.uuid || material._uuid || '') || id),
+            name: readAssetName(material),
+            type: shortClassName(material),
+            effect,
+            shaderName: effect.name,
+            properties,
+            textures,
+            passes: readMaterialPasses(material, options || {})
+        };
+    }
+
+    function readMaterials(component, options) {
         const candidates = [];
         for (const key of ['materials', '_materials', 'sharedMaterials', '_sharedMaterials']) {
             try {
@@ -2298,16 +2904,12 @@
         } catch (_) {
         }
         const map = new Map();
-        for (const material of candidates) {
+        candidates.forEach((material, slot) => {
             const id = stableAssetId(material) || `material:${map.size + 1}`;
             if (!map.has(id)) {
-                map.set(id, {
-                    id,
-                    name: String(material && (material.name || material._name) || ''),
-                    type: material && material.constructor && (material.constructor.__classname__ || material.constructor.name) || ''
-                });
+                map.set(id, readMaterialSummary(material, slot, options || {}));
             }
-        }
+        });
         return Array.from(map.values());
     }
 
@@ -2327,6 +2929,181 @@
             }
         }
         return null;
+    }
+
+    function getRendererComponents(node, args) {
+        const componentName = String(args && (args.component || args.componentType) || '').trim();
+        const renderers = [];
+        for (const component of getComponents(node)) {
+            const type = getComponentType(component);
+            if (componentKind(type) !== 'renderer') {
+                continue;
+            }
+            if (componentName && !componentMatches(component, componentName)) {
+                continue;
+            }
+            renderers.push(component);
+        }
+        return renderers;
+    }
+
+    function buildRendererInfo(found, args) {
+        const options = {
+            includeProperties: args.includeProperties !== false,
+            includeTextures: args.includeTextures !== false,
+            includePasses: !!args.includePasses,
+            props: Array.isArray(args.props) ? args.props : undefined
+        };
+        const renderers = getRendererComponents(found.node, args).map((component, index) => {
+            const materials = readMaterials(component, options);
+            const mesh = readMesh(component);
+            return {
+                index,
+                component: componentSummary(component),
+                type: getComponentType(component),
+                enabled: typeof component.enabled === 'boolean' ? component.enabled : true,
+                mesh,
+                materialCount: materials.length,
+                materials
+            };
+        });
+        return {
+            node: {
+                name: getNodeName(found.node),
+                uuid: getNodeUuid(found.node),
+                path: found.path,
+                active: isNodeActive(found.node),
+                position: readPosition(found.node),
+                rotation: readRotation(found.node),
+                scale: readScale(found.node)
+            },
+            rendererCount: renderers.length,
+            renderers
+        };
+    }
+
+    function getRendererInfo(args) {
+        const found = findNode(args.node || args.query || args.path || args.uuid);
+        if (!found) {
+            return { success: false, error: `未找到节点：${args.node || args.query || args.path || args.uuid || ''}` };
+        }
+        const data = buildRendererInfo(found, args || {});
+        if (!data.rendererCount) {
+            return {
+                success: false,
+                error: `节点 ${found.path} 上没有找到 Renderer 组件。`,
+                data
+            };
+        }
+        return { success: true, data };
+    }
+
+    function normalizeCompareValue(value) {
+        if (value === null || value === undefined) {
+            return '';
+        }
+        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+            return String(value).toLowerCase();
+        }
+        if (typeof value === 'object') {
+            return JSON.stringify(value).toLowerCase();
+        }
+        return String(value).toLowerCase();
+    }
+
+    function valueMatches(actual, expected, tolerance) {
+        if (typeof expected === 'number') {
+            const actualNumber = Number(actual);
+            return Number.isFinite(actualNumber) && Math.abs(actualNumber - expected) <= tolerance;
+        }
+        if (expected && typeof expected === 'object' && !Array.isArray(expected)) {
+            if (!actual || typeof actual !== 'object') {
+                return false;
+            }
+            return Object.entries(expected).every(([key, value]) => valueMatches(actual[key], value, tolerance));
+        }
+        const actualText = normalizeCompareValue(actual);
+        const expectedText = normalizeCompareValue(expected);
+        return actualText === expectedText || actualText.includes(expectedText);
+    }
+
+    function pushValidation(checks, name, expected, actual, passed, message) {
+        checks.push({ name, expected, actual, passed: !!passed, message });
+    }
+
+    function validateMaterialRuntime(args) {
+        const rendererResult = getRendererInfo(Object.assign({}, args, {
+            includeProperties: true,
+            includeTextures: true,
+            includePasses: !!args.includePasses
+        }));
+        if (!rendererResult.success) {
+            return rendererResult;
+        }
+        const data = rendererResult.data;
+        const checks = [];
+        const tolerance = Number(args.tolerance) || 0.001;
+        if (typeof args.nodeActive === 'boolean') {
+            pushValidation(checks, 'nodeActive', args.nodeActive, data.node.active, data.node.active === args.nodeActive, data.node.active === args.nodeActive ? '节点 active 符合预期。' : '节点 active 与预期不一致。');
+        }
+        const renderer = data.renderers[0];
+        if (typeof args.rendererEnabled === 'boolean') {
+            pushValidation(checks, 'rendererEnabled', args.rendererEnabled, renderer.enabled, renderer.enabled === args.rendererEnabled, renderer.enabled === args.rendererEnabled ? 'Renderer enabled 符合预期。' : 'Renderer enabled 与预期不一致。');
+        }
+        const slot = Number.isFinite(Number(args.materialSlot)) ? Number(args.materialSlot) : 0;
+        const material = renderer.materials.find((item) => Number(item.slot) === slot) || renderer.materials[slot] || renderer.materials[0] || null;
+        if (!material) {
+            pushValidation(checks, 'material', `slot ${slot}`, null, false, `材质槽 ${slot} 没有运行态材质。`);
+        } else {
+            if (args.materialName) {
+                const passed = valueMatches(material.name, args.materialName, tolerance);
+                pushValidation(checks, 'materialName', args.materialName, material.name, passed, passed ? '材质名称符合预期。' : '材质名称与预期不一致。');
+            }
+            if (args.materialUuid) {
+                const actualUuid = material.uuid || material.id;
+                const passed = actualUuid === args.materialUuid;
+                pushValidation(checks, 'materialUuid', args.materialUuid, actualUuid, passed, passed ? '材质 UUID 符合预期。' : '材质 UUID 与预期不一致。');
+            }
+            if (args.effectName) {
+                const actualEffect = material.effect && material.effect.name || material.shaderName || '';
+                const passed = valueMatches(actualEffect, args.effectName, tolerance);
+                pushValidation(checks, 'effectName', args.effectName, actualEffect, passed, passed ? 'Effect/Shader 符合预期。' : 'Effect/Shader 与预期不一致。');
+            }
+            const expectedProperties = args.expectedProperties || args.properties || null;
+            if (expectedProperties && typeof expectedProperties === 'object') {
+                for (const [key, expected] of Object.entries(expectedProperties)) {
+                    const actual = material.properties ? material.properties[key] : undefined;
+                    const passed = valueMatches(actual, expected, tolerance);
+                    pushValidation(checks, `property.${key}`, expected, actual, passed, passed ? `材质属性 ${key} 符合预期。` : `材质属性 ${key} 与预期不一致。`);
+                }
+            }
+            const expectedTextures = args.expectedTextures || args.textures || null;
+            if (expectedTextures && typeof expectedTextures === 'object') {
+                for (const [key, expected] of Object.entries(expectedTextures)) {
+                    const actual = material.textures ? material.textures[key] : undefined;
+                    const actualText = actual && (actual.name || actual.id || actual.uuid || actual.type) || '';
+                    const passed = valueMatches(actualText, expected, tolerance);
+                    pushValidation(checks, `texture.${key}`, expected, actual, passed, passed ? `纹理 ${key} 符合预期。` : `纹理 ${key} 与预期不一致。`);
+                }
+            }
+        }
+        return {
+            success: true,
+            data: {
+                passed: checks.every((item) => item.passed),
+                node: data.node,
+                renderer: renderer ? {
+                    component: renderer.component,
+                    enabled: renderer.enabled,
+                    type: renderer.type,
+                    mesh: renderer.mesh
+                } : null,
+                materialSlot: slot,
+                actualMaterial: material,
+                checks,
+                rendererInfo: data
+            }
+        };
     }
 
     function topEntries(map, limit) {
@@ -2362,6 +3139,10 @@
         const nodes = collectNodes();
         const componentTypes = {};
         const materialMap = new Map();
+        const effectMap = {};
+        const textureMap = new Map();
+        const renderersByMaterial = {};
+        const renderersByMesh = {};
         const meshMap = new Map();
         const renderers = [];
         const cameras = [];
@@ -2376,6 +3157,7 @@
         let maxDepth = 0;
         let enabledRendererCount = 0;
         let disabledRendererCount = 0;
+        let materialSlotCount = 0;
         for (const item of nodes) {
             const active = isNodeActive(item.node);
             if (active) {
@@ -2399,13 +3181,55 @@
                     position: readPosition(item.node)
                 };
                 if (kind === 'renderer') {
-                    const materials = readMaterials(component);
+                    const materials = readMaterials(component, {
+                        includeProperties: args.includeProperties !== false,
+                        includeTextures: args.includeTextures !== false,
+                        includePasses: !!args.includePasses,
+                        props: Array.isArray(args.props) ? args.props : undefined
+                    });
                     const mesh = readMesh(component);
                     for (const material of materials) {
                         materialMap.set(material.id, material);
+                        materialSlotCount++;
+                        const effectName = material.effect && material.effect.name || material.shaderName || 'UnknownEffect';
+                        effectMap[effectName] = (effectMap[effectName] || 0) + 1;
+                        renderersByMaterial[material.id] = renderersByMaterial[material.id] || {
+                            id: material.id,
+                            name: material.name,
+                            effect: effectName,
+                            rendererCount: 0,
+                            nodes: []
+                        };
+                        renderersByMaterial[material.id].rendererCount++;
+                        if (renderersByMaterial[material.id].nodes.length < 20) {
+                            renderersByMaterial[material.id].nodes.push(item.path);
+                        }
+                        for (const [textureKey, texture] of Object.entries(material.textures || {})) {
+                            const textureId = texture.id || texture.name || `${material.id}:${textureKey}`;
+                            if (!textureMap.has(textureId)) {
+                                textureMap.set(textureId, Object.assign({ keys: [], materialIds: [] }, texture));
+                            }
+                            const textureInfo = textureMap.get(textureId);
+                            if (!textureInfo.keys.includes(textureKey)) {
+                                textureInfo.keys.push(textureKey);
+                            }
+                            if (!textureInfo.materialIds.includes(material.id)) {
+                                textureInfo.materialIds.push(material.id);
+                            }
+                        }
                     }
                     if (mesh) {
                         meshMap.set(mesh.id, mesh);
+                        renderersByMesh[mesh.id] = renderersByMesh[mesh.id] || {
+                            id: mesh.id,
+                            name: mesh.name,
+                            rendererCount: 0,
+                            nodes: []
+                        };
+                        renderersByMesh[mesh.id].rendererCount++;
+                        if (renderersByMesh[mesh.id].nodes.length < 20) {
+                            renderersByMesh[mesh.id].nodes.push(item.path);
+                        }
                     }
                     if (enabled && active) {
                         enabledRendererCount++;
@@ -2524,6 +3348,16 @@
                     lights: lights.slice(0, maxNodes),
                     particles: particles.slice(0, maxNodes)
                 },
+                materials: {
+                    totalSlots: materialSlotCount,
+                    unique: materialMap.size,
+                    uniqueTextureCount: textureMap.size,
+                    byEffect: topEntries(effectMap, 12),
+                    byMaterial: Object.values(renderersByMaterial).sort((a, b) => b.rendererCount - a.rendererCount).slice(0, 30),
+                    byMesh: Object.values(renderersByMesh).sort((a, b) => b.rendererCount - a.rendererCount).slice(0, 30),
+                    textures: Array.from(textureMap.values()).slice(0, 50),
+                    list: Array.from(materialMap.values()).slice(0, 50)
+                },
                 batching,
                 physics: {
                     rigidbodyCount: rigidbodies.length,
@@ -2638,6 +3472,10 @@
                 return componentInfo(args);
             case 'get_component_detail':
                 return componentDetail(args);
+            case 'get_renderer_info':
+                return getRendererInfo(args);
+            case 'validate_material_runtime':
+                return validateMaterialRuntime(args);
             case 'get_property_path':
                 return getPropertyPath(args);
             case 'call_component_method':
@@ -2731,6 +3569,10 @@
     }
 
     async function pollLoop() {
+        if (state.polling) {
+            return;
+        }
+        state.polling = true;
         while (true) {
             try {
                 if (!state.clientId) {
@@ -2756,6 +3598,20 @@
                 state.clientId = null;
                 await sleep(1000);
             }
+        }
+    }
+
+    function startPollLoopWhenSafe() {
+        const start = () => {
+            setTimeout(() => {
+                pollLoop().catch(() => {});
+            }, 1500);
+        };
+        if (document.readyState === 'complete') {
+            start();
+        } else {
+            window.addEventListener('load', start, { once: true });
+            setTimeout(start, 8000);
         }
     }
 
@@ -2809,8 +3665,15 @@
     };
 
     installConsoleCapture();
+    installRuntimeErrorCapture();
+    flushEarlyRuntimeErrors();
+    register().catch((error) => {
+        state.connected = false;
+        state.lastError = error && error.message ? error.message : String(error);
+        state.clientId = null;
+    });
     setInterval(() => {
         heartbeat().catch(() => {});
     }, 3000);
-    pollLoop();
+    startPollLoopWhenSafe();
 })();

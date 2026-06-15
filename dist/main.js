@@ -252,10 +252,28 @@ function rememberDevPort(settings, port) {
     } catch (_) {}
 }
 
+function clearCocosMcpToolModuleCache() {
+    const keywords = [
+        '/tools/cocos/',
+        '\\tools\\cocos\\',
+        '/runtime/',
+        '\\runtime\\',
+        '/mcp-server',
+        '\\mcp-server'
+    ];
+    for (const modulePath of Object.keys(require.cache)) {
+        const normalized = String(modulePath);
+        if (keywords.some((keyword) => normalized.includes(keyword))) {
+            delete require.cache[modulePath];
+        }
+    }
+}
+
 async function startChineseMcpServerWithPort(options = {}) {
     try {
         const forceRestart = !!(options && options.forceRestart);
         const requestedPort = normalizeRequestedPort(options);
+        clearCocosMcpToolModuleCache();
         const serverModulePath = require.resolve('./mcp-server');
         delete require.cache[serverModulePath];
 
@@ -568,12 +586,21 @@ function simplifyRegisteredTools(tools) {
         const parts = name.split('_');
         const category = parts.length > 1 ? parts[0] : 'cocos';
         const toolName = parts.length > 1 ? parts.slice(1).join('_') : name;
+        const actionEnum = tool
+            && tool.inputSchema
+            && tool.inputSchema.properties
+            && tool.inputSchema.properties.action
+            && Array.isArray(tool.inputSchema.properties.action.enum)
+            ? tool.inputSchema.properties.action.enum
+            : [];
 
         return {
             name,
             category,
             toolName,
             description: tool && tool.description ? String(tool.description) : '',
+            actions: actionEnum,
+            actionCount: actionEnum.length,
         };
     }).filter((tool) => !!tool.name);
 }
@@ -712,6 +739,9 @@ async function devReloadPlugin() {
                 server.stop();
             } catch (_) {}
         }
+
+        clearCocosMcpToolModuleCache();
+        globalThis.__cocosMcpDevServer = null;
 
         setTimeout(() => {
             requestCocosPluginReload().catch((error) => {

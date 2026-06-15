@@ -11,7 +11,8 @@ const EXTENDED_TOOL_NAMES = [
     'cocos_animation_graph',
     'cocos_preview',
     'cocos_runtime',
-    'cocos_physics'
+    'cocos_physics',
+    'cocos_material'
 ];
 
 function createFreshHandler(modulePath, exportName) {
@@ -126,6 +127,20 @@ function markPreviewStarted(args, result, beforeReachable) {
     });
 }
 
+function shouldReuseRunningPreview(args, beforeReachable) {
+    if (!beforeReachable) {
+        return false;
+    }
+    const options = args || {};
+    if (options.forceOpen === true || options.openBrowser === true) {
+        return false;
+    }
+    if (options.reuseExisting === false) {
+        return false;
+    }
+    return true;
+}
+
 function markPreviewStopped(args, result) {
     const state = getPreviewState();
     state.requested = false;
@@ -138,7 +153,7 @@ function markPreviewStopped(args, result) {
     return getPreviewStatus();
 }
 
-function createPreviewToolDefinition() {
+function createLegacyPreviewToolDefinition() {
     return {
         name: 'preview',
         description: 'Cocos 浏览器预览辅助工具 - 启动/停止预览，并返回预览状态、启动时间、预览地址和是否可能复用已有服务。',
@@ -157,6 +172,48 @@ function createPreviewToolDefinition() {
                 port: {
                     type: 'number',
                     description: '预览服务端口，默认 7456'
+                }
+            },
+            required: ['action']
+        }
+    };
+}
+
+function createPreviewToolDefinition() {
+    return {
+        name: 'preview',
+        description: [
+            'Cocos 浏览器预览辅助工具 - 启动/停止预览，并返回预览状态、启动时间、预览地址和是否复用已有服务。',
+            '当预览服务已在运行时，start 默认静默复用，不会再次打开原始预览页。',
+            '需要可视化调试绘制时，不要用内部浏览器承载页面；优先调用 cocos_runtime.open_injected_preview 打开系统外部浏览器自动注入页。'
+        ].join('\n'),
+        inputSchema: {
+            type: 'object',
+            properties: {
+                action: {
+                    type: 'string',
+                    enum: ['start', 'stop', 'status'],
+                    description: '预览操作：start 启动或复用，stop 停止，status 获取状态'
+                },
+                platform: {
+                    type: 'string',
+                    description: '预览平台，通常为 browser'
+                },
+                port: {
+                    type: 'number',
+                    description: '预览服务端口，默认 7456'
+                },
+                reuseExisting: {
+                    type: 'boolean',
+                    description: '当端口已有预览服务时是否静默复用，默认 true；设为 false 会重新调用 Cocos 预览启动'
+                },
+                openBrowser: {
+                    type: 'boolean',
+                    description: '是否强制打开原始预览浏览器页，默认 false；可视化调试请保持 false 并使用 cocos_runtime.open_injected_preview'
+                },
+                forceOpen: {
+                    type: 'boolean',
+                    description: 'openBrowser 的别名；设为 true 时即使端口已可达也会调用 Cocos run browser'
                 }
             },
             required: ['action']
@@ -206,6 +263,25 @@ async function executeHandler(createHandler, args) {
 async function runPreviewAction(instance, originalExecute, args) {
     const port = Number(args && args.port) || DEFAULT_PREVIEW_PORT;
     const beforeReachable = await probePort('127.0.0.1', port);
+    if (shouldReuseRunningPreview(args, beforeReachable)) {
+        const runArgs = Object.assign({}, args || {}, {
+            action: 'run',
+            platform: (args && args.platform) || 'browser'
+        });
+        const result = {
+            success: true,
+            message: '预览服务已在运行，已静默复用现有预览服务。',
+            data: {
+                platform: runArgs.platform,
+                reusedExistingServer: true,
+                openedRawPreview: false
+            }
+        };
+        const previewStatus = markPreviewStarted(runArgs, result, beforeReachable);
+        return Object.assign({}, result, {
+            data: Object.assign({}, result.data, { previewStatus })
+        });
+    }
     const runArgs = Object.assign({}, args || {}, {
         action: 'run',
         platform: (args && args.platform) || 'browser'
