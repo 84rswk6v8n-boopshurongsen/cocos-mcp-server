@@ -1,7 +1,7 @@
 'use strict';
 
 (function () {
-    const VERSION = '0.1.4';
+    const VERSION = '0.1.15';
     const currentScript = document.currentScript;
     const scriptUrl = currentScript && currentScript.src ? currentScript.src : '';
     const baseUrl = scriptUrl ? scriptUrl.replace(/\/runtime\/bridge\.js(?:\?.*)?$/, '') : 'http://127.0.0.1:3300';
@@ -17,6 +17,28 @@
     };
     const consoleLogs = window.__cocosMcpConsoleLogs || (window.__cocosMcpConsoleLogs = []);
     const CONSOLE_LOG_LIMIT = 500;
+    const debugDrawState = window.__cocosMcpPhysicsDebugDraw || (window.__cocosMcpPhysicsDebugDraw = {
+        canvas: null,
+        context: null,
+        panel: null,
+        drawings: [],
+        stashedDrawings: [],
+        nextId: 1,
+        raf: 0,
+        enabled: true,
+        visibleRays: true,
+        visibleColliders: true,
+        panelVisible: true,
+        panelX: 16,
+        panelY: 72
+    });
+    debugDrawState.enabled = debugDrawState.enabled !== false;
+    debugDrawState.visibleRays = debugDrawState.visibleRays !== false;
+    debugDrawState.visibleColliders = debugDrawState.visibleColliders !== false;
+    debugDrawState.panelVisible = debugDrawState.panelVisible !== false;
+    debugDrawState.panelX = Number(debugDrawState.panelX) || 16;
+    debugDrawState.panelY = Number(debugDrawState.panelY) || 72;
+    debugDrawState.stashedDrawings = Array.isArray(debugDrawState.stashedDrawings) ? debugDrawState.stashedDrawings : [];
 
     function sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
@@ -29,11 +51,19 @@
         if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
             return value;
         }
-        if (value instanceof Error) {
+        if (value instanceof Error || value && (value.name || value.message || value.stack) && typeof value !== 'function') {
             return {
-                name: value.name,
-                message: value.message,
-                stack: value.stack
+                name: value.name || '',
+                message: value.message || '',
+                stack: value.stack || ''
+            };
+        }
+        if (value && typeof value === 'object' && (value.type || value.target || value.currentTarget)) {
+            const target = value.target || value.currentTarget || null;
+            return {
+                type: value.type || '',
+                message: value.message || '',
+                target: target && (target.src || target.href || target.currentSrc || target.tagName || target.nodeName) || ''
             };
         }
         try {
@@ -59,11 +89,12 @@
                 return String(item);
             }
         }).join(' ');
+        const finalText = text && text.trim() ? text : `[${level}] 空日志内容`;
         consoleLogs.push({
             index: consoleLogs.length + 1,
             level,
             time: new Date().toISOString(),
-            text,
+            text: finalText,
             values
         });
         if (consoleLogs.length > CONSOLE_LOG_LIMIT) {
@@ -925,6 +956,1023 @@
         };
     }
 
+    function vec3From(value, fallback) {
+        fallback = fallback || { x: 0, y: 0, z: 0 };
+        return {
+            x: Number(value && value.x !== undefined ? value.x : fallback.x) || 0,
+            y: Number(value && value.y !== undefined ? value.y : fallback.y) || 0,
+            z: Number(value && value.z !== undefined ? value.z : fallback.z) || 0
+        };
+    }
+
+    function addVec3(left, right) {
+        return { x: left.x + right.x, y: left.y + right.y, z: left.z + right.z };
+    }
+
+    function scaleVec3(value, scale) {
+        return { x: value.x * scale, y: value.y * scale, z: value.z * scale };
+    }
+
+    function normalizeVec3(value) {
+        const length = Math.sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
+        return length ? { x: value.x / length, y: value.y / length, z: value.z / length } : { x: 0, y: 0, z: -1 };
+    }
+
+    function readComponentValue(component, publicName, privateName, fallback) {
+        try {
+            if (component && component[publicName] !== undefined) {
+                return component[publicName];
+            }
+        } catch (_) {}
+        try {
+            if (component && component[privateName] !== undefined) {
+                return component[privateName];
+            }
+        } catch (_) {}
+        return fallback;
+    }
+
+    function getCameras() {
+        const cameras = [];
+        for (const item of collectNodes()) {
+            for (const component of getComponents(item.node)) {
+                const type = getComponentType(component);
+                if (/Camera$/i.test(type) || type === 'cc.Camera') {
+                    cameras.push({ node: item.node, path: item.path, component });
+                }
+            }
+        }
+        return cameras;
+    }
+
+    function createCcVec3(value) {
+        const cc = getCc();
+        if (cc && typeof cc.v3 === 'function') {
+            return cc.v3(value.x, value.y, value.z);
+        }
+        if (cc && cc.Vec3) {
+            try {
+                return new cc.Vec3(value.x, value.y, value.z);
+            } catch (_) {}
+        }
+        return value;
+    }
+
+    function ensureDebugCanvas() {
+        let canvas = debugDrawState.canvas;
+        if (!canvas || !canvas.parentNode) {
+            canvas = document.createElement('canvas');
+            canvas.id = 'cocos-mcp-physics-debug-overlay';
+            canvas.style.position = 'fixed';
+            canvas.style.left = '0';
+            canvas.style.top = '0';
+            canvas.style.width = '100vw';
+            canvas.style.height = '100vh';
+            canvas.style.pointerEvents = 'none';
+            canvas.style.zIndex = '2147483647';
+            document.documentElement.appendChild(canvas);
+            debugDrawState.canvas = canvas;
+            debugDrawState.context = canvas.getContext('2d');
+        }
+        resizeDebugCanvas();
+        return canvas;
+    }
+
+    function resizeDebugCanvas() {
+        const canvas = debugDrawState.canvas;
+        if (!canvas) {
+            return;
+        }
+        const width = Math.max(1, Math.floor(window.innerWidth || document.documentElement.clientWidth || 1));
+        const height = Math.max(1, Math.floor(window.innerHeight || document.documentElement.clientHeight || 1));
+        if (canvas.width !== width || canvas.height !== height) {
+            canvas.width = width;
+            canvas.height = height;
+        }
+    }
+
+    function applyDebugVisibility() {
+        if (debugDrawState.canvas) {
+            debugDrawState.canvas.style.display = debugDrawState.enabled ? 'block' : 'none';
+        }
+        if (debugDrawState.panel) {
+            debugDrawState.panel.style.display = debugDrawState.panelVisible ? 'block' : 'none';
+        }
+    }
+
+    function updateDebugPanel() {
+        const panel = debugDrawState.panel;
+        if (!panel) {
+            return;
+        }
+        const rays = panel.querySelector('[data-debug-toggle="rays"]');
+        const colliders = panel.querySelector('[data-debug-toggle="colliders"]');
+        const enabled = panel.querySelector('[data-debug-toggle="enabled"]');
+        const clear = panel.querySelector('[data-debug-clear="1"]');
+        if (rays) {
+            rays.checked = debugDrawState.visibleRays !== false;
+        }
+        if (colliders) {
+            colliders.checked = debugDrawState.visibleColliders !== false;
+        }
+        if (enabled) {
+            enabled.checked = debugDrawState.enabled !== false;
+        }
+        if (clear) {
+            clear.textContent = debugDrawState.drawings.length
+                ? '清除绘制'
+                : debugDrawState.stashedDrawings.length
+                    ? '恢复绘制'
+                    : '清除绘制';
+        }
+        panel.style.left = `${Math.max(0, Number(debugDrawState.panelX) || 0)}px`;
+        panel.style.top = `${Math.max(0, Number(debugDrawState.panelY) || 0)}px`;
+        applyDebugVisibility();
+    }
+
+    function ensureDebugPanel() {
+        let panel = debugDrawState.panel;
+        if (panel && panel.parentNode) {
+            updateDebugPanel();
+            return panel;
+        }
+        panel = document.createElement('div');
+        panel.id = 'cocos-mcp-physics-debug-panel';
+        panel.style.position = 'fixed';
+        panel.style.left = `${debugDrawState.panelX}px`;
+        panel.style.top = `${debugDrawState.panelY}px`;
+        panel.style.zIndex = '2147483647';
+        panel.style.minWidth = '168px';
+        panel.style.padding = '0';
+        panel.style.border = '1px solid rgba(0,229,255,0.75)';
+        panel.style.background = 'rgba(10,14,18,0.88)';
+        panel.style.color = '#e5faff';
+        panel.style.font = '12px sans-serif';
+        panel.style.boxShadow = '0 6px 18px rgba(0,0,0,0.35)';
+        panel.style.pointerEvents = 'auto';
+        panel.innerHTML = [
+            '<div data-debug-drag="1" style="cursor:move;padding:7px 9px;background:rgba(0,229,255,0.16);font-weight:600;user-select:none;">MCP 物理调试</div>',
+            '<label style="display:flex;align-items:center;gap:6px;padding:8px 9px 0;"><input data-debug-toggle="enabled" type="checkbox">启用显示</label>',
+            '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="rays" type="checkbox">显示射线</label>',
+            '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 8px;"><input data-debug-toggle="colliders" type="checkbox">显示碰撞体</label>',
+            '<button data-debug-clear="1" style="margin:0 9px 8px;padding:3px 8px;border:1px solid #40505a;background:#151f25;color:#e5faff;cursor:pointer;">清除绘制</button>'
+        ].join('');
+        document.documentElement.appendChild(panel);
+        debugDrawState.panel = panel;
+
+        const drag = panel.querySelector('[data-debug-drag="1"]');
+        if (drag) {
+            drag.addEventListener('mousedown', (event) => {
+                event.preventDefault();
+                const startX = event.clientX;
+                const startY = event.clientY;
+                const startLeft = Number(debugDrawState.panelX) || 0;
+                const startTop = Number(debugDrawState.panelY) || 0;
+                const move = (moveEvent) => {
+                    debugDrawState.panelX = Math.max(0, startLeft + moveEvent.clientX - startX);
+                    debugDrawState.panelY = Math.max(0, startTop + moveEvent.clientY - startY);
+                    updateDebugPanel();
+                };
+                const up = () => {
+                    window.removeEventListener('mousemove', move);
+                    window.removeEventListener('mouseup', up);
+                };
+                window.addEventListener('mousemove', move);
+                window.addEventListener('mouseup', up);
+            });
+        }
+        const enabled = panel.querySelector('[data-debug-toggle="enabled"]');
+        const rays = panel.querySelector('[data-debug-toggle="rays"]');
+        const colliders = panel.querySelector('[data-debug-toggle="colliders"]');
+        if (enabled) {
+            enabled.addEventListener('change', () => {
+                debugDrawState.enabled = !!enabled.checked;
+                redrawDebugDrawings();
+            });
+        }
+        if (rays) {
+            rays.addEventListener('change', () => {
+                debugDrawState.visibleRays = !!rays.checked;
+                redrawDebugDrawings();
+            });
+        }
+        if (colliders) {
+            colliders.addEventListener('change', () => {
+                debugDrawState.visibleColliders = !!colliders.checked;
+                redrawDebugDrawings();
+            });
+        }
+        const clear = panel.querySelector('[data-debug-clear="1"]');
+        if (clear) {
+            clear.addEventListener('click', () => {
+                togglePanelDebugDrawings();
+            });
+        }
+        updateDebugPanel();
+        return panel;
+    }
+
+    function getDebugCanvas() {
+        return ensureDebugCanvas();
+    }
+
+    function getGameCanvasViewport() {
+        const cc = getCc();
+        const gameCanvas = cc && cc.game && cc.game.canvas
+            || document.querySelector('canvas:not(#cocos-mcp-physics-debug-overlay)')
+            || null;
+        if (!gameCanvas || typeof gameCanvas.getBoundingClientRect !== 'function') {
+            return {
+                left: 0,
+                top: 0,
+                width: window.innerWidth || document.documentElement.clientWidth || 1,
+                height: window.innerHeight || document.documentElement.clientHeight || 1,
+                logicalWidth: window.innerWidth || document.documentElement.clientWidth || 1,
+                logicalHeight: window.innerHeight || document.documentElement.clientHeight || 1
+            };
+        }
+        const rect = gameCanvas.getBoundingClientRect();
+        return {
+            left: rect.left,
+            top: rect.top,
+            width: rect.width || gameCanvas.clientWidth || gameCanvas.width || 1,
+            height: rect.height || gameCanvas.clientHeight || gameCanvas.height || 1,
+            logicalWidth: gameCanvas.width || rect.width || 1,
+            logicalHeight: gameCanvas.height || rect.height || 1
+        };
+    }
+
+    function projectWorld(value) {
+        const world = vec3From(value);
+        const cameras = getCameras();
+        const canvas = getDebugCanvas();
+        for (const camera of cameras) {
+            const component = camera.component;
+            if (!component || typeof component.worldToScreen !== 'function') {
+                continue;
+            }
+            try {
+                const input = createCcVec3(world);
+                let output = null;
+                if (component.worldToScreen.length >= 2) {
+                    output = createCcVec3({ x: 0, y: 0, z: 0 });
+                    component.worldToScreen(input, output);
+                }
+                else {
+                    output = component.worldToScreen(input);
+                }
+                const screen = toPlainVec(output);
+                if (screen && Number.isFinite(screen.x) && Number.isFinite(screen.y)) {
+                    const viewport = getGameCanvasViewport();
+                    const scaleX = viewport.width / Math.max(1, viewport.logicalWidth);
+                    const scaleY = viewport.height / Math.max(1, viewport.logicalHeight);
+                    return {
+                        x: viewport.left + screen.x * scaleX,
+                        y: viewport.top + (viewport.logicalHeight - screen.y) * scaleY,
+                        z: Number(screen.z) || 0,
+                        camera: camera.path,
+                        viewport: {
+                            left: viewport.left,
+                            top: viewport.top,
+                            width: viewport.width,
+                            height: viewport.height
+                        }
+                    };
+                }
+            } catch (_) {}
+        }
+        return null;
+    }
+
+    function parseColor(value, fallback) {
+        if (typeof value === 'string' && value.trim()) {
+            return value;
+        }
+        if (value && typeof value === 'object') {
+            const r = Math.max(0, Math.min(255, Number(value.r) || 0));
+            const g = Math.max(0, Math.min(255, Number(value.g) || 0));
+            const b = Math.max(0, Math.min(255, Number(value.b) || 0));
+            const a = value.a === undefined ? 1 : Math.max(0, Math.min(1, Number(value.a) > 1 ? Number(value.a) / 255 : Number(value.a)));
+            return `rgba(${r},${g},${b},${a})`;
+        }
+        return fallback || '#00e5ff';
+    }
+
+    function addDebugDrawing(drawing, args) {
+        ensureDebugCanvas();
+        ensureDebugPanel();
+        debugDrawState.stashedDrawings = [];
+        const now = Date.now();
+        const duration = Number(args && args.duration) || 0;
+        const item = Object.assign({}, drawing, {
+            id: debugDrawState.nextId++,
+            createdAt: now,
+            expiresAt: duration > 0 ? now + duration : 0,
+            color: parseColor(args && args.color, drawing.color),
+            thickness: Math.max(1, Number(args && args.thickness) || Number(drawing.thickness) || 2),
+            showLabel: args && args.showLabel !== false
+        });
+        debugDrawState.drawings.push(item);
+        redrawDebugDrawings();
+        scheduleDebugRedraw();
+        updateDebugPanel();
+        return item;
+    }
+
+    function pruneDebugDrawings() {
+        const now = Date.now();
+        debugDrawState.drawings = debugDrawState.drawings.filter((item) => !item.expiresAt || item.expiresAt > now);
+    }
+
+    function drawLine(ctx, a, b, color, thickness) {
+        const pa = projectWorld(a);
+        const pb = projectWorld(b);
+        if (!pa || !pb) {
+            return false;
+        }
+        ctx.strokeStyle = color;
+        ctx.lineWidth = thickness;
+        ctx.beginPath();
+        ctx.moveTo(pa.x, pa.y);
+        ctx.lineTo(pb.x, pb.y);
+        ctx.stroke();
+        return { from: pa, to: pb };
+    }
+
+    function drawLabel(ctx, text, world, color) {
+        const point = projectWorld(world);
+        if (!point || !text) {
+            return;
+        }
+        ctx.font = '12px sans-serif';
+        ctx.fillStyle = 'rgba(0,0,0,0.65)';
+        const width = ctx.measureText(text).width + 8;
+        ctx.fillRect(point.x + 5, point.y - 18, width, 18);
+        ctx.fillStyle = color;
+        ctx.fillText(text, point.x + 9, point.y - 5);
+    }
+
+    function drawMarker(ctx, world, color, size) {
+        const point = projectWorld(world);
+        if (!point) {
+            return false;
+        }
+        const radius = Math.max(4, Number(size) || 8);
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(point.x - radius - 4, point.y);
+        ctx.lineTo(point.x + radius + 4, point.y);
+        ctx.moveTo(point.x, point.y - radius - 4);
+        ctx.lineTo(point.x, point.y + radius + 4);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        return true;
+    }
+
+    function drawRayItem(ctx, item) {
+        if (item.live && item.sourceArgs) {
+            const resolved = resolveRayDrawing(item.sourceArgs);
+            if (!resolved.success) {
+                return;
+            }
+            Object.assign(item, resolved.data);
+        }
+        const lineEnd = item.hit && item.hit.point ? item.hit.point : item.end;
+        const lineColor = item.hit && item.hit.point ? (item.hitColor || '#ffcc00') : item.color;
+        const projected = drawLine(ctx, item.origin, lineEnd, lineColor, item.thickness);
+        if (item.hit && item.hit.point) {
+            drawMarker(ctx, item.hit.point, item.hitColor || '#ffcc00', item.hitSize || 8);
+            if (item.showLabel) {
+                drawLabel(ctx, item.hitLabel || '命中', item.hit.point, item.hitColor || '#ffcc00');
+            }
+        }
+        if (projected && item.showLabel) {
+            drawLabel(ctx, item.label || 'ray', item.end, item.color);
+        }
+    }
+
+    function drawColliderItem(ctx, item) {
+        if (item.live) {
+            const updated = refreshLiveColliderDrawing(item);
+            if (!updated) {
+                return;
+            }
+        }
+        for (const edge of item.edges || []) {
+            drawLine(ctx, edge[0], edge[1], item.color, item.thickness);
+        }
+        if (item.showLabel) {
+            drawLabel(ctx, item.label || item.node || 'collider', item.labelWorld || item.center || (item.edges && item.edges[0] && item.edges[0][0]), item.color);
+        }
+    }
+
+    function redrawDebugDrawings() {
+        ensureDebugCanvas();
+        pruneDebugDrawings();
+        const canvas = debugDrawState.canvas;
+        const ctx = debugDrawState.context;
+        if (!canvas || !ctx) {
+            return;
+        }
+        resizeDebugCanvas();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (debugDrawState.enabled === false) {
+            applyDebugVisibility();
+            return;
+        }
+        applyDebugVisibility();
+        for (const item of debugDrawState.drawings) {
+            if (item.type === 'ray') {
+                if (debugDrawState.visibleRays === false) {
+                    continue;
+                }
+                drawRayItem(ctx, item);
+            }
+            else if (item.type === 'collider') {
+                if (debugDrawState.visibleColliders === false) {
+                    continue;
+                }
+                drawColliderItem(ctx, item);
+            }
+        }
+    }
+
+    function scheduleDebugRedraw() {
+        if (debugDrawState.raf || !window.requestAnimationFrame) {
+            return;
+        }
+        const tick = function () {
+            debugDrawState.raf = 0;
+            if (!debugDrawState.drawings.length) {
+                return;
+            }
+            redrawDebugDrawings();
+            debugDrawState.raf = window.requestAnimationFrame(tick);
+        };
+        debugDrawState.raf = window.requestAnimationFrame(tick);
+    }
+
+    function transformLocalPoint(node, local) {
+        const cc = getCc();
+        try {
+            if (cc && cc.Vec3 && node && node.worldMatrix && typeof cc.Vec3.transformMat4 === 'function') {
+                const out = new cc.Vec3();
+                cc.Vec3.transformMat4(out, createCcVec3(local), node.worldMatrix);
+                return vec3From(out);
+            }
+        } catch (_) {}
+        const world = readPosition(node) || { x: 0, y: 0, z: 0 };
+        const scale = readScale(node) || { x: 1, y: 1, z: 1 };
+        return {
+            x: world.x + local.x * scale.x,
+            y: world.y + local.y * scale.y,
+            z: world.z + local.z * scale.z
+        };
+    }
+
+    function buildBoxEdges(node, center, size) {
+        center = vec3From(center);
+        size = vec3From(size, { x: 1, y: 1, z: 1 });
+        const hx = size.x / 2;
+        const hy = size.y / 2;
+        const hz = size.z / 2;
+        const locals = [
+            { x: center.x - hx, y: center.y - hy, z: center.z - hz },
+            { x: center.x + hx, y: center.y - hy, z: center.z - hz },
+            { x: center.x + hx, y: center.y + hy, z: center.z - hz },
+            { x: center.x - hx, y: center.y + hy, z: center.z - hz },
+            { x: center.x - hx, y: center.y - hy, z: center.z + hz },
+            { x: center.x + hx, y: center.y - hy, z: center.z + hz },
+            { x: center.x + hx, y: center.y + hy, z: center.z + hz },
+            { x: center.x - hx, y: center.y + hy, z: center.z + hz }
+        ];
+        const points = locals.map((point) => transformLocalPoint(node, point));
+        const pairs = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+        return pairs.map((pair) => [points[pair[0]], points[pair[1]]]);
+    }
+
+    function buildSphereEdges(node, center, radius) {
+        center = vec3From(center);
+        radius = Number(radius) || 0.5;
+        const edges = [];
+        const segments = 24;
+        const axes = [['x', 'y'], ['x', 'z'], ['y', 'z']];
+        for (const axis of axes) {
+            let previous = null;
+            for (let i = 0; i <= segments; i++) {
+                const angle = Math.PI * 2 * i / segments;
+                const local = { x: center.x, y: center.y, z: center.z };
+                local[axis[0]] += Math.cos(angle) * radius;
+                local[axis[1]] += Math.sin(angle) * radius;
+                const world = transformLocalPoint(node, local);
+                if (previous) {
+                    edges.push([previous, world]);
+                }
+                previous = world;
+            }
+        }
+        return edges;
+    }
+
+    function buildColliderDrawing(item, component, args) {
+        const type = getComponentType(component);
+        const center = readComponentValue(component, 'center', '_center', { x: 0, y: 0, z: 0 });
+        let edges = [];
+        if (/SphereCollider/i.test(type) || /CircleCollider/i.test(type)) {
+            edges = buildSphereEdges(item.node, center, readComponentValue(component, 'radius', '_radius', 0.5));
+        }
+        else {
+            const size = readComponentValue(component, 'size', '_size', null);
+            if (size) {
+                edges = buildBoxEdges(item.node, center, size);
+            }
+            else {
+                const radius = Number(readComponentValue(component, 'radius', '_radius', 0.5)) || 0.5;
+                const height = Number(readComponentValue(component, 'cylinderHeight', '_cylinderHeight', readComponentValue(component, 'height', '_height', radius * 2))) || radius * 2;
+                edges = buildBoxEdges(item.node, center, { x: radius * 2, y: height, z: radius * 2 });
+            }
+        }
+        const isTrigger = !!readComponentValue(component, 'isTrigger', '_isTrigger', false);
+        const worldCenter = transformLocalPoint(item.node, vec3From(center));
+        return {
+            type: 'collider',
+            node: item.path,
+            nodeRef: getNodeUuid(item.node) || item.path,
+            componentRef: getComponentUuid(component) || type,
+            componentType: type,
+            center: worldCenter,
+            labelWorld: worldCenter,
+            label: args && args.showLabel === false ? '' : `${item.path} ${type.split('.').pop()}`,
+            color: isTrigger ? '#ffcc00' : '#00e5ff',
+            edges
+        };
+    }
+
+    function refreshLiveColliderDrawing(item) {
+        const found = findNode(item.nodeRef || item.node || item.path);
+        if (!found) {
+            return false;
+        }
+        const component = getComponents(found.node).find((candidate) => {
+            const type = getComponentType(candidate);
+            const uuid = getComponentUuid(candidate);
+            return uuid === item.componentRef
+                || type === item.componentType
+                || type.endsWith(String(item.componentType || ''));
+        });
+        if (!component) {
+            return false;
+        }
+        const updated = buildColliderDrawing(found, component, item.sourceArgs || item);
+        Object.assign(item, updated, {
+            id: item.id,
+            createdAt: item.createdAt,
+            expiresAt: item.expiresAt,
+            color: item.color,
+            thickness: item.thickness,
+            showLabel: item.showLabel,
+            live: true,
+            sourceArgs: item.sourceArgs
+        });
+        return true;
+    }
+
+    function createRay(origin, direction) {
+        const cc = getCc();
+        const geometry = cc && (cc.geometry || cc.geomUtils || cc.geom);
+        const rayCtor = geometry && (geometry.Ray || geometry.ray);
+        const ccOrigin = createCcVec3(origin);
+        const ccDirection = createCcVec3(direction);
+        try {
+            if (rayCtor && typeof rayCtor.create === 'function') {
+                return rayCtor.create(origin.x, origin.y, origin.z, direction.x, direction.y, direction.z);
+            }
+        } catch (_) {}
+        try {
+            if (typeof rayCtor === 'function') {
+                return new rayCtor(origin.x, origin.y, origin.z, direction.x, direction.y, direction.z);
+            }
+        } catch (_) {}
+        return {
+            o: ccOrigin,
+            d: ccDirection,
+            origin: ccOrigin,
+            direction: ccDirection
+        };
+    }
+
+    function getPhysicsSystem() {
+        const cc = getCc();
+        return cc && (cc.PhysicsSystem && (cc.PhysicsSystem.instance || cc.PhysicsSystem.INSTANCE)
+            || cc.physics && cc.physics.PhysicsSystem && cc.physics.PhysicsSystem.instance
+            || null);
+    }
+
+    function rayHitNodeName(result) {
+        const collider = result && (result.collider || result.shape || result.hitCollider);
+        const node = collider && (collider.node || collider._node);
+        return getNodeName(node) || '';
+    }
+
+    function simplifyRaycastResult(result) {
+        if (!result) {
+            return null;
+        }
+        const point = vec3From(result.hitPoint || result.point || result.worldPoint || result.position || result._hitPoint);
+        if (!point) {
+            return null;
+        }
+        return {
+            point,
+            normal: vec3From(result.hitNormal || result.normal || result._hitNormal, null),
+            distance: Number(result.distance || result.hitDistance || result._distance || 0) || 0,
+            node: rayHitNodeName(result),
+            collider: result.collider ? getComponentType(result.collider) : ''
+        };
+    }
+
+    function physicsRaycastClosest(origin, direction, maxDistance, args) {
+        const system = getPhysicsSystem();
+        if (!system) {
+            return {
+                supported: false,
+                hit: false,
+                error: '当前运行态没有可用的 PhysicsSystem。'
+            };
+        }
+        const ray = createRay(origin, direction);
+        const mask = args && args.mask !== undefined ? args.mask : 0xffffffff;
+        const queryTrigger = args && args.queryTrigger !== undefined ? !!args.queryTrigger : true;
+        try {
+            let hasHit = false;
+            if (typeof system.raycastClosest === 'function') {
+                hasHit = !!system.raycastClosest(ray, mask, maxDistance, queryTrigger);
+            }
+            else if (typeof system.raycast === 'function') {
+                hasHit = !!system.raycast(ray, mask, maxDistance, queryTrigger);
+            }
+            else {
+                return {
+                    supported: false,
+                    hit: false,
+                    error: 'PhysicsSystem 上没有可用的 raycast 方法。'
+                };
+            }
+            const raw = system.raycastClosestResult
+                || (Array.isArray(system.raycastResults) && system.raycastResults[0])
+                || null;
+            const hit = hasHit ? simplifyRaycastResult(raw) : null;
+            return {
+                supported: true,
+                hit: !!hit,
+                result: hit
+            };
+        } catch (error) {
+            return {
+                supported: false,
+                hit: false,
+                error: error && error.message ? error.message : String(error)
+            };
+        }
+    }
+
+    function distanceVec3(a, b) {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dz = b.z - a.z;
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    function colliderCenterWorld(found) {
+        if (!found || !found.node) {
+            return null;
+        }
+        const collider = getComponents(found.node).find((component) => /Collider/i.test(getComponentType(component)));
+        if (!collider) {
+            return null;
+        }
+        const center = readComponentValue(collider, 'center', '_center', { x: 0, y: 0, z: 0 });
+        return transformLocalPoint(found.node, vec3From(center));
+    }
+
+    function rayPointFromNode(ref, offset) {
+        const found = findNode(ref);
+        if (!found) {
+            return null;
+        }
+        const base = colliderCenterWorld(found) || readPosition(found.node) || { x: 0, y: 0, z: 0 };
+        return addVec3(base, vec3From(offset, { x: 0, y: 0, z: 0 }));
+    }
+
+    function debugDrawRay(args) {
+        const resolved = resolveRayDrawing(args);
+        if (!resolved.success) {
+            return resolved;
+        }
+        const item = addDebugDrawing(Object.assign({
+            type: 'ray',
+            color: '#ff3355',
+            live: !!args.live,
+            sourceArgs: args.live ? Object.assign({}, args) : null
+        }, resolved.data), args);
+        return {
+            success: true,
+            message: args.live ? '已绘制实时运行态调试射线。' : '已绘制运行态调试射线。',
+            data: {
+                id: item.id,
+                live: !!item.live,
+                origin: item.origin,
+                direction: item.direction,
+                end: item.end,
+                maxDistance: item.maxDistance,
+                raycast: item.raycast,
+                hit: !!item.hit,
+                label: item.label,
+                hitLabel: item.hitLabel,
+                hitInfo: item.hitInfo,
+                totalDrawings: debugDrawState.drawings.length
+            }
+        };
+    }
+
+    function resolveRayDrawing(args) {
+        const originRef = args.originNode || args.fromNode || args.startNode || '';
+        const targetRef = args.targetNode || args.toNode || args.endNode || '';
+        const origin = originRef ? rayPointFromNode(originRef, args.originOffset) : vec3From(args.origin);
+        const target = targetRef ? rayPointFromNode(targetRef, args.targetOffset) : (args.target ? vec3From(args.target) : null);
+        if (!origin) {
+            return { success: false, error: '缺少射线起点：请提供 origin 或 originNode。' };
+        }
+        if (targetRef && !target) {
+            return { success: false, error: `未找到射线目标节点：${targetRef}` };
+        }
+        const direction = target
+            ? normalizeVec3({ x: target.x - origin.x, y: target.y - origin.y, z: target.z - origin.z })
+            : normalizeVec3(vec3From(args.direction, { x: 0, y: 0, z: -1 }));
+        const maxDistance = Math.max(0.01, Number(args.maxDistance || args.distance) || (target ? distanceVec3(origin, target) : 10));
+        const end = addVec3(origin, scaleVec3(direction, maxDistance));
+        const raycast = args.raycast !== false;
+        const hitInfo = raycast ? physicsRaycastClosest(origin, direction, maxDistance, args) : { supported: false, hit: false };
+        const hit = hitInfo && hitInfo.hit && hitInfo.result ? hitInfo.result : null;
+        const badLabel = (value) => /^[?\uFFFD\s]+$/.test(String(value || ''));
+        const genericHitLabel = (value) => {
+            const text = String(value || '').trim().toLowerCase();
+            return text === 'hit' || text === '命中';
+        };
+        const rayLabel = args.label && !badLabel(args.label)
+            ? args.label
+            : originRef && targetRef
+                ? `射线：${originRef} -> ${targetRef}`
+                : hit ? '射线' : '射线：未命中';
+        const hitLabel = hit
+            ? args.hitLabel && !badLabel(args.hitLabel) && !genericHitLabel(args.hitLabel)
+                ? args.hitLabel
+                : `命中：${hit.node || hit.collider || '碰撞体'}`
+            : '';
+        return {
+            success: true,
+            data: {
+                origin,
+                direction,
+                end,
+                maxDistance,
+                raycast,
+                hit: !!hit,
+                hitInfo,
+                label: rayLabel,
+                hit,
+                hitColor: parseColor(args.hitColor, '#ffcc00'),
+                hitLabel
+            }
+        };
+    }
+
+    function debugDrawCollider(args) {
+        const found = findNode(args.node || args.query || args.path || args.uuid);
+        if (!found) {
+            return { success: false, error: `未找到节点：${args.node || args.query || args.path || args.uuid || ''}` };
+        }
+        const componentName = String(args.component || args.componentType || args.colliderType || '').trim();
+        const colliders = getComponents(found.node).filter((component) => {
+            const type = getComponentType(component);
+            return /Collider/i.test(type) && (!componentName || componentMatches(component, componentName));
+        });
+        if (!colliders.length) {
+            return {
+                success: false,
+                error: `节点 ${found.path} 上没有可绘制的碰撞体组件。`,
+                data: { components: getComponents(found.node).map(getComponentType) }
+            };
+        }
+        const drawings = colliders.map((component) => addDebugDrawing(Object.assign(
+            buildColliderDrawing(found, component, args),
+            { live: !!args.live, sourceArgs: args.live ? Object.assign({}, args) : null }
+        ), args));
+        return {
+            success: true,
+            message: '已绘制节点碰撞体。',
+            data: {
+                node: found.path,
+                drawn: drawings.length,
+                drawingIds: drawings.map((item) => item.id),
+                colliders: colliders.map(componentSummary),
+                totalDrawings: debugDrawState.drawings.length
+            }
+        };
+    }
+
+    function debugDrawAllColliders(args) {
+        const maxCount = Math.max(1, Math.min(Number(args.maxCount || args.maxNodes) || 200, 1000));
+        const includeInactive = !!args.includeInactive;
+        const rootRef = args.rootNode || '';
+        let nodes = collectNodes();
+        if (rootRef) {
+            const root = findNode(rootRef);
+            if (!root) {
+                return { success: false, error: `未找到根节点：${rootRef}` };
+            }
+            const collected = [];
+            walkNodes(root.node, (node, currentPath) => collected.push({ node, path: currentPath }), root.path);
+            nodes = collected;
+        }
+        const drawings = [];
+        let skipped = 0;
+        for (const item of nodes) {
+            if (!includeInactive && !isNodeActive(item.node)) {
+                skipped++;
+                continue;
+            }
+            for (const component of getComponents(item.node)) {
+                if (!/Collider/i.test(getComponentType(component))) {
+                    continue;
+                }
+                if (drawings.length >= maxCount) {
+                    break;
+                }
+                drawings.push(addDebugDrawing(Object.assign(
+                    buildColliderDrawing(item, component, args),
+                    { live: !!args.live, sourceArgs: args.live ? Object.assign({}, args) : null }
+                ), args));
+            }
+            if (drawings.length >= maxCount) {
+                break;
+            }
+        }
+        return {
+            success: true,
+            message: '已绘制运行场景中的碰撞体。',
+            data: {
+                drawn: drawings.length,
+                maxCount,
+                skipped,
+                drawingIds: drawings.map((item) => item.id),
+                totalDrawings: debugDrawState.drawings.length
+            }
+        };
+    }
+
+    function debugAddCollider(args) {
+        const found = findNode(args.node || args.query || args.path || args.uuid);
+        if (!found) {
+            return { success: false, error: `未找到节点：${args.node || args.query || args.path || args.uuid || ''}` };
+        }
+        const cc = getCc();
+        if (!cc) {
+            return { success: false, error: '当前运行态没有可用的 cc。' };
+        }
+        const colliderType = String(args.colliderType || 'capsule').toLowerCase();
+        const ctor = colliderType === 'box'
+            ? cc.BoxCollider
+            : colliderType === 'sphere'
+                ? cc.SphereCollider
+                : cc.CapsuleCollider;
+        if (!ctor) {
+            return { success: false, error: `当前运行态没有可用的 ${colliderType} 碰撞体类型。` };
+        }
+        let collider = getComponents(found.node).find((component) => component instanceof ctor || getComponentType(component) === `cc.${ctor.name}`);
+        const existing = !!collider;
+        try {
+            if (!collider) {
+                collider = found.node.addComponent(ctor);
+            }
+            if ('isTrigger' in collider && args.isTrigger !== undefined) {
+                collider.isTrigger = !!args.isTrigger;
+            }
+            if ('center' in collider && args.center) {
+                collider.center = createCcVec3(vec3From(args.center));
+            }
+            if ('radius' in collider && args.radius !== undefined) {
+                collider.radius = Number(args.radius) || 0.5;
+            }
+            if ('cylinderHeight' in collider && (args.height !== undefined || args.cylinderHeight !== undefined)) {
+                collider.cylinderHeight = Number(args.cylinderHeight !== undefined ? args.cylinderHeight : args.height) || 2;
+            }
+            else if ('height' in collider && args.height !== undefined) {
+                collider.height = Number(args.height) || 2;
+            }
+            if ('size' in collider && args.size) {
+                collider.size = createCcVec3(vec3From(args.size, { x: 1, y: 1, z: 1 }));
+            }
+            if ('direction' in collider && args.direction !== undefined) {
+                collider.direction = Number(args.direction) || 1;
+            }
+            if (typeof collider.onEnable === 'function') {
+                try { collider.onEnable(); } catch (_) {}
+            }
+            return {
+                success: true,
+                message: existing ? '运行态碰撞体已更新。' : '运行态碰撞体已添加。',
+                data: {
+                    node: found.path,
+                    component: componentSummary(collider),
+                    existing
+                }
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error && error.message ? error.message : String(error)
+            };
+        }
+    }
+
+    function stopDebugRedrawLoop() {
+        if (debugDrawState.raf && window.cancelAnimationFrame) {
+            window.cancelAnimationFrame(debugDrawState.raf);
+        }
+        debugDrawState.raf = 0;
+    }
+
+    function clearDebugCanvas() {
+        if (debugDrawState.context && debugDrawState.canvas) {
+            debugDrawState.context.clearRect(0, 0, debugDrawState.canvas.width, debugDrawState.canvas.height);
+        }
+    }
+
+    function togglePanelDebugDrawings() {
+        if (debugDrawState.drawings.length) {
+            debugDrawState.stashedDrawings = debugDrawState.drawings;
+            debugDrawState.drawings = [];
+            stopDebugRedrawLoop();
+            clearDebugCanvas();
+            updateDebugPanel();
+            return;
+        }
+        if (debugDrawState.stashedDrawings.length) {
+            debugDrawState.drawings = debugDrawState.stashedDrawings;
+            debugDrawState.stashedDrawings = [];
+            redrawDebugDrawings();
+            scheduleDebugRedraw();
+            updateDebugPanel();
+        }
+    }
+
+    function debugClearDrawings() {
+        debugDrawState.drawings = [];
+        debugDrawState.stashedDrawings = [];
+        stopDebugRedrawLoop();
+        clearDebugCanvas();
+        updateDebugPanel();
+        return { success: true, message: '已清除运行态物理调试绘制。', data: { totalDrawings: 0 } };
+    }
+
+    function debugSetVisibility(args) {
+        if (args.enabled !== undefined) {
+            debugDrawState.enabled = !!args.enabled;
+        }
+        if (args.showRays !== undefined || args.rays !== undefined) {
+            debugDrawState.visibleRays = args.showRays !== undefined ? !!args.showRays : !!args.rays;
+        }
+        if (args.showColliders !== undefined || args.colliders !== undefined) {
+            debugDrawState.visibleColliders = args.showColliders !== undefined ? !!args.showColliders : !!args.colliders;
+        }
+        if (args.panelVisible !== undefined || args.panel !== undefined) {
+            debugDrawState.panelVisible = args.panelVisible !== undefined ? !!args.panelVisible : !!args.panel;
+        }
+        ensureDebugCanvas();
+        ensureDebugPanel();
+        updateDebugPanel();
+        redrawDebugDrawings();
+        return {
+            success: true,
+            message: '已更新运行态物理调试显示设置。',
+            data: {
+                enabled: debugDrawState.enabled !== false,
+                showRays: debugDrawState.visibleRays !== false,
+                showColliders: debugDrawState.visibleColliders !== false,
+                panelVisible: debugDrawState.panelVisible !== false,
+                totalDrawings: debugDrawState.drawings.length
+            }
+        };
+    }
+
     function runtimeStats() {
         const scene = getScene();
         const sceneRootCount = scene ? 1 : 0;
@@ -943,6 +1991,7 @@
                 componentTypes[type] = (componentTypes[type] || 0) + 1;
             }
         }
+        const profiler = collectProfilerStats();
         return {
             sceneName: getSceneName(scene),
             sceneIncluded: !!scene,
@@ -951,9 +2000,544 @@
             activeNodeCount,
             componentCount,
             componentTypes,
+            fps: profiler.fps,
+            drawCalls: profiler.drawCalls,
+            frameTimeMs: profiler.frameTimeMs,
+            frameIntervalMs: profiler.frameIntervalMs,
+            gameLogicTimeMs: profiler.gameLogicTimeMs,
+            physicsTimeMs: profiler.physicsTimeMs,
+            rendererTimeMs: profiler.rendererTimeMs,
+            presentTimeMs: profiler.presentTimeMs,
+            triangles: profiler.triangles,
+            instances: profiler.instances,
+            gfxTextureMemoryMB: profiler.gfxTextureMemoryMB,
+            gfxBufferMemoryMB: profiler.gfxBufferMemoryMB,
+            profiler,
+            url: location.href
+        };
+    }
+
+    function stableAssetId(value) {
+        if (!value) {
+            return '';
+        }
+        try {
+            return String(value.uuid || value._uuid || value._id || value.name || value._name || value._native || '');
+        } catch (_) {
+            return '';
+        }
+    }
+
+    function readFirstNumber(source, keys) {
+        for (const key of keys) {
+            try {
+                const value = source && source[key];
+                if (typeof value === 'number' && Number.isFinite(value)) {
+                    return value;
+                }
+                if (value && typeof value.value === 'number' && Number.isFinite(value.value)) {
+                    return value.value;
+                }
+                if (value && typeof value.counter === 'number' && Number.isFinite(value.counter)) {
+                    return value.counter;
+                }
+                if (value && value.counter && typeof value.counter.value === 'number' && Number.isFinite(value.counter.value)) {
+                    return value.counter.value;
+                }
+                if (value && value.counter && typeof value.counter._value === 'number' && Number.isFinite(value.counter._value)) {
+                    return value.counter._value;
+                }
+                if (value && value.counter && typeof value.counter._averageValue === 'number' && Number.isFinite(value.counter._averageValue) && value.counter._averageValue > 0) {
+                    return value.counter._averageValue;
+                }
+                if (value && value.counter && typeof value.counter.human === 'function') {
+                    const humanValue = value.counter.human();
+                    if (typeof humanValue === 'number' && Number.isFinite(humanValue)) {
+                        return humanValue;
+                    }
+                }
+            } catch (_) {
+            }
+        }
+        return null;
+    }
+
+    function normalizeTimeMs(value) {
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
+            return null;
+        }
+        return value > 0 && value < 1 ? value * 1000 : value;
+    }
+
+    function getRenderSceneRoot() {
+        const scene = getScene();
+        const candidates = [];
+        try {
+            if (scene && scene._renderScene) {
+                candidates.push(scene._renderScene);
+            }
+        } catch (_) {
+        }
+        try {
+            const cc = getCc();
+            const director = getDirector(cc);
+            if (director && director._scene && director._scene._renderScene) {
+                candidates.push(director._scene._renderScene);
+            }
+        } catch (_) {
+        }
+        for (const item of collectNodes()) {
+            for (const component of getComponents(item.node)) {
+                try {
+                    if (component && component._model && component._model.scene) {
+                        candidates.push(component._model.scene);
+                    }
+                } catch (_) {
+                }
+                try {
+                    const models = component && component._models;
+                    if (Array.isArray(models)) {
+                        for (const model of models) {
+                            if (model && model.scene) {
+                                candidates.push(model.scene);
+                            }
+                        }
+                    }
+                } catch (_) {
+                }
+            }
+        }
+        for (const renderScene of candidates) {
+            try {
+                if (renderScene && renderScene._root) {
+                    return renderScene._root;
+                }
+            } catch (_) {
+            }
+        }
+        return null;
+    }
+
+    function getGfxDevice(root) {
+        const candidates = [
+            root && root._device,
+            root && root.device,
+            root && root._mainWindow && root._mainWindow._device,
+            root && root._pipeline && root._pipeline._device,
+            root && root._batcher && (root._batcher.device || root._batcher._device)
+        ];
+        for (const device of candidates) {
+            if (device) {
+                return device;
+            }
+        }
+        return null;
+    }
+
+    function collectGfxMemory(device) {
+        const memory = device && (device._memoryStatus || device.memoryStatus);
+        if (!memory || typeof memory !== 'object') {
+            return null;
+        }
+        const result = {};
+        for (const [key, value] of Object.entries(memory)) {
+            if (typeof value === 'number' && Number.isFinite(value)) {
+                result[key] = value;
+            } else if (value && typeof value === 'object') {
+                const nested = {};
+                for (const [childKey, childValue] of Object.entries(value)) {
+                    if (typeof childValue === 'number' && Number.isFinite(childValue)) {
+                        nested[childKey] = childValue;
+                    }
+                }
+                if (Object.keys(nested).length) {
+                    result[key] = nested;
+                }
+            }
+        }
+        return Object.keys(result).length ? result : null;
+    }
+
+    function collectProfilerStats() {
+        const cc = getCc();
+        const director = getDirector(cc);
+        const profiler = cc && (cc.profiler || cc.Profiler && cc.Profiler.instance) || null;
+        const stats = profiler && (profiler._profilerStats || profiler.profilerStats || profiler._stats || profiler.stats || profiler._rootStats) || null;
+        const root = getRenderSceneRoot();
+        const device = getGfxDevice(root);
+        const result = {
             fps: null,
             drawCalls: null,
-            url: location.href
+            frameTimeMs: null,
+            frameIntervalMs: null,
+            gameLogicTimeMs: null,
+            physicsTimeMs: null,
+            rendererTimeMs: null,
+            presentTimeMs: null,
+            instances: null,
+            triangles: null,
+            gfxMemory: null,
+            gfxTextureMemoryMB: null,
+            gfxBufferMemoryMB: null,
+            renderer: null,
+            vendor: null,
+            totalFrames: null,
+            source: ''
+        };
+        try {
+            if (director && typeof director.getTotalFrames === 'function') {
+                result.totalFrames = director.getTotalFrames();
+            } else if (director && typeof director._totalFrames === 'number') {
+                result.totalFrames = director._totalFrames;
+            }
+        } catch (_) {
+        }
+        if (stats) {
+            result.fps = readFirstNumber(stats, ['fps', 'FPS', 'frameRate']);
+            result.drawCalls = readFirstNumber(stats, ['draws', 'drawCalls', 'drawcall', 'dc']);
+            result.frameTimeMs = readFirstNumber(stats, ['frame', 'frameTime', 'frameTimeMs']);
+            result.gameLogicTimeMs = readFirstNumber(stats, ['gameLogic', 'gameLogicTime', 'logic', 'logicTime']);
+            result.physicsTimeMs = readFirstNumber(stats, ['physics', 'physicsTime']);
+            result.rendererTimeMs = readFirstNumber(stats, ['renderer', 'rendererTime', 'render', 'renderTime']);
+            result.presentTimeMs = readFirstNumber(stats, ['present', 'presentTime']);
+            result.instances = readFirstNumber(stats, ['instances', 'instanceCount']);
+            result.triangles = readFirstNumber(stats, ['tricount', 'triangles', 'triangleCount']);
+            result.gfxTextureMemoryMB = readFirstNumber(stats, ['textureMemory', 'gfxTextureMemory']);
+            result.gfxBufferMemoryMB = readFirstNumber(stats, ['bufferMemory', 'gfxBufferMemory']);
+            result.source = 'cc.profiler';
+        }
+        if (root) {
+            result.fps = result.fps === null ? readFirstNumber(root, ['_fps', 'fps']) : result.fps;
+            result.frameIntervalMs = normalizeTimeMs(readFirstNumber(root, ['_frameTime', 'frameTime']));
+            result.frameTimeMs = result.frameTimeMs === null ? result.frameIntervalMs : result.frameTimeMs;
+            result.source = result.source || 'renderScene.root';
+        }
+        if (device) {
+            result.drawCalls = result.drawCalls === null ? readFirstNumber(device, ['_numDrawCalls', 'numDrawCalls', 'drawCalls']) : result.drawCalls;
+            result.instances = result.instances === null ? readFirstNumber(device, ['_numInstances', 'numInstances', 'instances']) : result.instances;
+            result.triangles = result.triangles === null ? readFirstNumber(device, ['_numTris', 'numTris', 'triangles']) : result.triangles;
+            result.gfxMemory = collectGfxMemory(device);
+            if (result.gfxMemory) {
+                result.gfxTextureMemoryMB = result.gfxTextureMemoryMB === null && typeof result.gfxMemory.textureSize === 'number' ? result.gfxMemory.textureSize / (1024 * 1024) : result.gfxTextureMemoryMB;
+                result.gfxBufferMemoryMB = result.gfxBufferMemoryMB === null && typeof result.gfxMemory.bufferSize === 'number' ? result.gfxMemory.bufferSize / (1024 * 1024) : result.gfxBufferMemoryMB;
+            }
+            try {
+                result.renderer = device._renderer || device.renderer || null;
+                result.vendor = device._vendor || device.vendor || null;
+            } catch (_) {
+            }
+            result.source = result.source ? `${result.source}+gfxDevice` : 'gfxDevice';
+        }
+        try {
+            if (result.fps === null && cc && cc.game && typeof cc.game.frameRate === 'number') {
+                result.fps = cc.game.frameRate;
+                result.source = result.source || 'cc.game.frameRate';
+            }
+        } catch (_) {
+        }
+        return result;
+    }
+
+    function componentKind(type) {
+        if (/Camera$/i.test(type) || type === 'cc.Camera') {
+            return 'camera';
+        }
+        if (/Light$/i.test(type) || /DirectionalLight|SphereLight|SpotLight|PointLight/i.test(type)) {
+            return 'light';
+        }
+        if (/Particle/i.test(type)) {
+            return 'particle';
+        }
+        if (/RigidBody/i.test(type)) {
+            return 'rigidbody';
+        }
+        if (/Collider/i.test(type)) {
+            return 'collider';
+        }
+        if (/Animation|Animator|Skeleton/i.test(type)) {
+            return 'animation';
+        }
+        if (/MeshRenderer|SkinnedMeshRenderer|ModelRenderer|Sprite|Label|RichText|TiledMap|Graphics/i.test(type)) {
+            return 'renderer';
+        }
+        if (/Widget|Layout|Button|Toggle|Slider|ScrollView|EditBox|ProgressBar|PageView|Mask/i.test(type)) {
+            return 'ui';
+        }
+        return 'script';
+    }
+
+    function readMaterials(component) {
+        const candidates = [];
+        for (const key of ['materials', '_materials', 'sharedMaterials', '_sharedMaterials']) {
+            try {
+                const value = component && component[key];
+                if (Array.isArray(value)) {
+                    candidates.push(...value);
+                } else if (value) {
+                    candidates.push(value);
+                }
+            } catch (_) {
+            }
+        }
+        try {
+            if (component && typeof component.getSharedMaterial === 'function') {
+                const material = component.getSharedMaterial(0);
+                if (material) {
+                    candidates.push(material);
+                }
+            }
+        } catch (_) {
+        }
+        try {
+            if (candidates.length === 0 && component && typeof component.getMaterial === 'function') {
+                const material = component.getMaterial(0);
+                if (material) {
+                    candidates.push(material);
+                }
+            }
+        } catch (_) {
+        }
+        const map = new Map();
+        for (const material of candidates) {
+            const id = stableAssetId(material) || `material:${map.size + 1}`;
+            if (!map.has(id)) {
+                map.set(id, {
+                    id,
+                    name: String(material && (material.name || material._name) || ''),
+                    type: material && material.constructor && (material.constructor.__classname__ || material.constructor.name) || ''
+                });
+            }
+        }
+        return Array.from(map.values());
+    }
+
+    function readMesh(component) {
+        for (const key of ['mesh', '_mesh', 'model', '_model']) {
+            try {
+                const value = component && component[key];
+                const id = stableAssetId(value);
+                if (id || value) {
+                    return {
+                        id: id || key,
+                        name: String(value && (value.name || value._name) || ''),
+                        type: value && value.constructor && (value.constructor.__classname__ || value.constructor.name) || ''
+                    };
+                }
+            } catch (_) {
+            }
+        }
+        return null;
+    }
+
+    function topEntries(map, limit) {
+        return Object.entries(map)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, limit)
+            .map(([name, count]) => ({ name, count }));
+    }
+
+    function recentImportantLogs(limit) {
+        const count = Math.max(0, Math.min(Number(limit) || 20, 100));
+        return consoleLogs
+            .filter((item) => item && (item.level === 'warn' || item.level === 'error'))
+            .slice(-count)
+            .map((item) => ({
+                index: item.index,
+                level: item.level,
+                time: item.time,
+                text: String(item.text || '').slice(0, 500)
+            }));
+    }
+
+    function analyzeFrame(args) {
+        args = args || {};
+        const scene = getScene();
+        if (!scene) {
+            return { success: false, error: '当前网页没有可读取的 Cocos 运行场景。', data: checkSupport() };
+        }
+        const includeNodes = !!args.includeNodes;
+        const includeInactive = !!args.includeInactive;
+        const maxNodes = Math.max(1, Math.min(Number(args.maxNodes) || 80, 1000));
+        const logLimit = Math.max(0, Math.min(Number(args.logLimit) || 20, 100));
+        const nodes = collectNodes();
+        const componentTypes = {};
+        const materialMap = new Map();
+        const meshMap = new Map();
+        const renderers = [];
+        const cameras = [];
+        const lights = [];
+        const particles = [];
+        const colliders = [];
+        const rigidbodies = [];
+        const animations = [];
+        let componentCount = 0;
+        let activeNodeCount = 0;
+        let inactiveNodeCount = 0;
+        let maxDepth = 0;
+        let enabledRendererCount = 0;
+        let disabledRendererCount = 0;
+        for (const item of nodes) {
+            const active = isNodeActive(item.node);
+            if (active) {
+                activeNodeCount++;
+            } else {
+                inactiveNodeCount++;
+            }
+            maxDepth = Math.max(maxDepth, item.path ? item.path.split('/').length : 0);
+            for (const component of getComponents(item.node)) {
+                componentCount++;
+                const type = getComponentType(component);
+                const kind = componentKind(type);
+                const enabled = typeof component.enabled === 'boolean' ? component.enabled : true;
+                componentTypes[type] = (componentTypes[type] || 0) + 1;
+                const summary = {
+                    node: item.path,
+                    nodeUuid: getNodeUuid(item.node),
+                    type,
+                    enabled,
+                    active,
+                    position: readPosition(item.node)
+                };
+                if (kind === 'renderer') {
+                    const materials = readMaterials(component);
+                    const mesh = readMesh(component);
+                    for (const material of materials) {
+                        materialMap.set(material.id, material);
+                    }
+                    if (mesh) {
+                        meshMap.set(mesh.id, mesh);
+                    }
+                    if (enabled && active) {
+                        enabledRendererCount++;
+                    } else {
+                        disabledRendererCount++;
+                    }
+                    if (renderers.length < maxNodes && (includeInactive || active)) {
+                        renderers.push(Object.assign({}, summary, {
+                            materialCount: materials.length,
+                            materials: materials.slice(0, 6),
+                            mesh
+                        }));
+                    }
+                } else if (kind === 'camera') {
+                    cameras.push(summary);
+                } else if (kind === 'light') {
+                    lights.push(summary);
+                } else if (kind === 'particle') {
+                    particles.push(summary);
+                } else if (kind === 'collider') {
+                    colliders.push(summary);
+                } else if (kind === 'rigidbody') {
+                    rigidbodies.push(summary);
+                } else if (kind === 'animation') {
+                    animations.push(summary);
+                }
+            }
+        }
+        const profiler = collectProfilerStats();
+        const importantLogs = recentImportantLogs(logLimit);
+        const materialReuseRatio = enabledRendererCount > 0 ? materialMap.size / enabledRendererCount : null;
+        const meshReuseRatio = enabledRendererCount > 0 ? meshMap.size / enabledRendererCount : null;
+        const batchingSuggestions = [];
+        if (typeof profiler.drawCalls === 'number' && profiler.drawCalls > 80) {
+            batchingSuggestions.push('Draw call 偏高，优先检查材质、Pass、宏、纹理状态是否一致，再考虑静态合批、动态合批或 GPU Instancing。');
+        }
+        if (materialReuseRatio !== null && materialReuseRatio > 0.75 && enabledRendererCount > 3) {
+            batchingSuggestions.push('材质复用率偏低，多个渲染器可能各用各的材质实例，会增加合批难度。');
+        }
+        if (meshReuseRatio !== null && meshReuseRatio < 0.5 && enabledRendererCount > 5) {
+            batchingSuggestions.push('网格复用率较高，可以检查相同 Mesh 是否适合 GPU Instancing。');
+        }
+        if (typeof profiler.triangles === 'number' && profiler.triangles > 200000) {
+            batchingSuggestions.push('三角面数量较高，合批只能减少提交次数，仍需要检查模型面数、LOD 或遮挡裁剪。');
+        }
+        const batchingPressure = (typeof profiler.drawCalls === 'number' && profiler.drawCalls > 80)
+            || (materialReuseRatio !== null && materialReuseRatio > 0.75 && enabledRendererCount > 3)
+            ? '需要关注'
+            : '正常';
+        const batching = {
+            pressure: batchingPressure,
+            drawCalls: profiler.drawCalls,
+            frameTimeMs: profiler.frameTimeMs,
+            rendererTimeMs: profiler.rendererTimeMs,
+            triangles: profiler.triangles,
+            instances: profiler.instances,
+            enabledRendererCount,
+            uniqueMaterialCount: materialMap.size,
+            uniqueMeshCount: meshMap.size,
+            materialReuseRatio,
+            meshReuseRatio,
+            suggestions: batchingSuggestions
+        };
+        const warnings = [];
+        if (nodes.length > 1000) {
+            warnings.push({ level: 'warn', code: 'many_nodes', message: `节点数量较多：${nodes.length}` });
+        }
+        if (enabledRendererCount > 200) {
+            warnings.push({ level: 'warn', code: 'many_renderers', message: `启用的渲染组件较多：${enabledRendererCount}` });
+        }
+        if (batchingSuggestions.length) {
+            warnings.push({ level: batchingPressure === '需要关注' ? 'warn' : 'info', code: 'batching_pressure', message: batchingSuggestions[0] });
+        }
+        if (materialMap.size > 0 && enabledRendererCount > 0 && materialMap.size / enabledRendererCount > 0.75) {
+            warnings.push({ level: 'info', code: 'many_unique_materials', message: `材质复用率可能偏低：${materialMap.size} 个材质 / ${enabledRendererCount} 个启用渲染组件` });
+        }
+        if (cameras.length > 3) {
+            warnings.push({ level: 'info', code: 'many_cameras', message: `相机数量较多：${cameras.length}` });
+        }
+        if (lights.length > 8) {
+            warnings.push({ level: 'info', code: 'many_lights', message: `灯光数量较多：${lights.length}` });
+        }
+        if (importantLogs.some((item) => item.level === 'error')) {
+            warnings.push({ level: 'warn', code: 'runtime_errors', message: '运行态控制台存在 error 日志，请优先检查。' });
+        }
+        return {
+            success: true,
+            data: {
+                capturedAt: new Date().toISOString(),
+                bridgeVersion: VERSION,
+                url: location.href,
+                sceneName: getSceneName(scene),
+                profiler,
+                nodes: {
+                    total: nodes.length,
+                    active: activeNodeCount,
+                    inactive: inactiveNodeCount,
+                    maxDepth
+                },
+                components: {
+                    total: componentCount,
+                    types: componentTypes,
+                    topTypes: topEntries(componentTypes, 12)
+                },
+                rendering: {
+                    rendererCount: enabledRendererCount + disabledRendererCount,
+                    enabledRendererCount,
+                    disabledRendererCount,
+                    cameraCount: cameras.length,
+                    lightCount: lights.length,
+                    particleCount: particles.length,
+                    uniqueMaterialCount: materialMap.size,
+                    uniqueMeshCount: meshMap.size,
+                    renderers: includeNodes ? renderers : undefined,
+                    cameras: cameras.slice(0, maxNodes),
+                    lights: lights.slice(0, maxNodes),
+                    particles: particles.slice(0, maxNodes)
+                },
+                batching,
+                physics: {
+                    rigidbodyCount: rigidbodies.length,
+                    colliderCount: colliders.length
+                },
+                animation: {
+                    animationComponentCount: animations.length
+                },
+                logs: {
+                    stored: consoleLogs.length,
+                    warnOrErrorRecent: importantLogs
+                },
+                warnings
+            }
         };
     }
 
@@ -1064,6 +2648,21 @@
                 return setNodeActive(args);
             case 'set_node_transform':
                 return setNodeTransform(args);
+            case 'debug_draw_ray':
+                return debugDrawRay(args);
+            case 'debug_draw_collider':
+                return debugDrawCollider(args);
+            case 'debug_draw_all_colliders':
+                return debugDrawAllColliders(args);
+            case 'debug_add_collider':
+                return debugAddCollider(args);
+            case 'debug_clear_drawings':
+                return debugClearDrawings(args);
+            case 'debug_set_visibility':
+                return debugSetVisibility(args);
+            case 'analyze_frame':
+            case 'capture_frame':
+                return analyzeFrame(args);
             case 'get_runtime_stats':
                 if (args.waitReady !== false && !isRuntimeReady({ requireNodes: true })) {
                     const readyResult = await waitUntilReady({
@@ -1200,6 +2799,12 @@
         },
         getConsoleLogs: function (options) {
             return execute({ action: 'get_console_logs', args: options || {} });
+        },
+        analyzeFrame: function (options) {
+            return execute({ action: 'analyze_frame', args: options || {} });
+        },
+        captureFrame: function (options) {
+            return execute({ action: 'capture_frame', args: options || {} });
         }
     };
 

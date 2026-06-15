@@ -47,6 +47,24 @@ Cocos MCP Server 是一个面向 Cocos Creator 3.7+ / 3.8.x 的 MCP 插件，让
 | `animation_graph` | Animation Graph 工具，用于编辑 `.animgraph` 资源，管理参数、状态、连线、过渡条件、Layer，并校验动画图。 |
 | `physics` | 物理配置工具，用于检查和配置刚体、碰撞体、触发区、投射物碰撞、碰撞分组、物理材质和物理调试。 |
 
+## 功能图文介绍
+
+### 运行态物理调试可视化
+
+`cocos_physics` 支持在 Cocos Web 预览运行后绘制物理调试信息，AI 可以通过 MCP 在外部浏览器自动打开注入预览页，并把射线、命中点和碰撞体线框直接叠加到游戏画面上。
+
+![运行态物理调试可视化](./docs/images/mcp-physics-debug-raycast.png)
+
+这个功能主要用于排查 3D 游戏里的物理检测问题，例如射线是否从正确位置发出、是否被中间碰撞体遮挡、命中的具体节点是谁，以及运行态碰撞体和模型显示是否对齐。调试面板支持开启或关闭显示、单独控制射线和碰撞体显示，并可以清除或恢复当前绘制内容。
+
+常用能力包括：
+
+- `debug_draw_ray`：绘制运行态射线，可显示命中点和命中节点名称。
+- `debug_draw_collider`：绘制指定节点的碰撞体线框。
+- `debug_draw_all_colliders`：绘制当前运行场景中的全部碰撞体。
+- `debug_set_visibility`：控制物理调试面板、射线和碰撞体显示状态。
+- `debug_clear_drawings`：清除当前运行态调试绘制。
+
 ## 使用建议
 
 - 修改 3 个以上节点时优先使用 `node` 的 `batch_modify`。

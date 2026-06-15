@@ -3,6 +3,9 @@
 const ACTIONS = [
     'get_injection_code',
     'get_injected_preview_url',
+    'open_injected_preview',
+    'list_clients',
+    'select_client',
     'clear_clients',
     'check_support',
     'wait_until_ready',
@@ -17,7 +20,9 @@ const ACTIONS = [
     'get_console_logs',
     'set_node_active',
     'set_node_transform',
-    'get_runtime_stats'
+    'get_runtime_stats',
+    'analyze_frame',
+    'capture_frame'
 ];
 
 class RuntimeHandler {
@@ -26,8 +31,9 @@ class RuntimeHandler {
             name: 'runtime',
             description: [
                 'Cocos Web 运行态桥接工具，用于读取浏览器预览页中的运行时场景、节点、组件和基础统计。',
-                '使用前需要在预览网页注入 /runtime/bridge.js；本工具只返回精简 JSON，不提供网页 UI。',
-                'Actions: get_injection_code, get_injected_preview_url, clear_clients, check_support, wait_until_ready, get_scene_tree, find_node, find_nodes_by_component, get_node_info, get_component_info, get_component_detail, get_property_path, call_component_method, get_console_logs, set_node_active, set_node_transform, get_runtime_stats.'
+                '需要可视化调试绘制时，先调用 open_injected_preview 打开系统外部浏览器自动注入 bridge；不要使用 Codex 内部浏览器承载调试绘制页面。',
+                '本工具只返回精简 JSON，不提供网页 UI。get_injection_code 仅作为特殊环境兜底，不作为默认流程。',
+                'Actions: get_injection_code, get_injected_preview_url, open_injected_preview, list_clients, select_client, clear_clients, check_support, wait_until_ready, get_scene_tree, find_node, find_nodes_by_component, get_node_info, get_component_info, get_component_detail, get_property_path, call_component_method, get_console_logs, set_node_active, set_node_transform, get_runtime_stats, analyze_frame, capture_frame.'
             ].join('\n'),
             inputSchema: {
                 type: 'object',
@@ -56,6 +62,14 @@ class RuntimeHandler {
                     previewPort: {
                         type: 'number',
                         description: '预览页端口，未提供 previewUrl 时使用，默认 7456'
+                    },
+                    clientId: {
+                        type: 'string',
+                        description: 'Runtime client id. Use list_clients to find it; select_client switches the active target.'
+                    },
+                    targetClientId: {
+                        type: 'string',
+                        description: 'Alias of clientId for selecting the runtime target page.'
                     },
                     node: {
                         type: 'string',
@@ -160,6 +174,22 @@ class RuntimeHandler {
                         type: 'number',
                         description: 'get_scene_tree 最大递归深度'
                     },
+                    includeNodes: {
+                        type: 'boolean',
+                        description: 'analyze_frame/capture_frame 是否返回渲染节点明细，默认 false'
+                    },
+                    includeInactive: {
+                        type: 'boolean',
+                        description: 'analyze_frame/capture_frame 是否在明细中包含 inactive 节点，默认 false'
+                    },
+                    maxNodes: {
+                        type: 'number',
+                        description: 'analyze_frame/capture_frame 最多返回的节点明细数量，默认 80'
+                    },
+                    logLimit: {
+                        type: 'number',
+                        description: 'analyze_frame/capture_frame 返回最近 warn/error 日志数量，默认 20'
+                    },
                     nameKeyword: {
                         type: 'string',
                         description: 'get_scene_tree 节点名称/路径筛选关键字'
@@ -219,7 +249,7 @@ class RuntimeHandler {
                     data: {
                         injectedPreviewUrl: manager.getInjectedPreviewUrl(args),
                         previewUrl: manager.getDefaultPreviewUrl(args),
-                        message: '请打开 injectedPreviewUrl，MCP 会代理 Cocos 预览页并自动注入 runtime bridge。'
+                        message: '已生成自动注入预览地址。默认请调用 open_injected_preview 打开系统外部浏览器，不要使用 Codex 内部浏览器承载调试绘制页面。'
                     }
                 }
                 : {

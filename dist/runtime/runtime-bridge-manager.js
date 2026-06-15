@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const childProcess = require('child_process');
 const { v4: uuidv4 } = require('uuid');
 
 class RuntimeBridgeManager {
@@ -12,7 +13,7 @@ class RuntimeBridgeManager {
         this.commandTimeoutMs = 10000;
         this.staleClientMs = 60000;
         this.port = Number(settings.port) || 3300;
-        this.minimumBridgeVersion = '0.1.4';
+        this.minimumBridgeVersion = '0.1.15';
         this.activeClientId = null;
     }
 
@@ -39,7 +40,54 @@ class RuntimeBridgeManager {
         const host = args.host || '127.0.0.1';
         const port = Number(args.port) || this.port || 3300;
         const previewUrl = this.getDefaultPreviewUrl(args);
-        return `http://${host}:${port}/runtime/preview?url=${encodeURIComponent(previewUrl)}`;
+        const url = `http://${host}:${port}/runtime/preview?url=${encodeURIComponent(previewUrl)}`;
+        return args.cacheBust === false ? url : `${url}&t=${Date.now()}`;
+    }
+
+    openExternalUrl(url) {
+        const platform = process.platform;
+        const command = platform === 'win32'
+            ? 'cmd'
+            : platform === 'darwin'
+                ? 'open'
+                : 'xdg-open';
+        const args = platform === 'win32'
+            ? ['/c', 'start', '', url]
+            : [url];
+        const child = childProcess.spawn(command, args, {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true
+        });
+        child.unref();
+    }
+
+    openInjectedPreview(args = {}) {
+        const injectedPreviewUrl = this.getInjectedPreviewUrl(args);
+        const previewUrl = this.getDefaultPreviewUrl(args);
+        try {
+            this.openExternalUrl(injectedPreviewUrl);
+            return {
+                success: true,
+                message: '已在外部浏览器打开自动注入预览页。',
+                data: {
+                    injectedPreviewUrl,
+                    previewUrl,
+                    bridgeUrl: this.getBridgeUrl(args)
+                }
+            };
+        } catch (error) {
+            return {
+                success: false,
+                message: '打开外部浏览器失败。',
+                error: error && error.message ? error.message : String(error),
+                data: {
+                    injectedPreviewUrl,
+                    previewUrl,
+                    bridgeUrl: this.getBridgeUrl(args)
+                }
+            };
+        }
     }
 
     getInjectionCode(args = {}) {
@@ -61,7 +109,7 @@ class RuntimeBridgeManager {
                 bridgeUrl,
                 injectedPreviewUrl,
                 code,
-                message: '优先使用 code 注入；如果浏览器自动化不能执行页面脚本，请直接打开 injectedPreviewUrl，它会自动代理预览页并注入 runtime bridge。'
+                message: '优先调用 open_injected_preview 打开外部浏览器自动注入预览页；本脚本仅作为特殊环境兜底。'
             }
         };
     }
@@ -106,6 +154,8 @@ class RuntimeBridgeManager {
 
     getStatus() {
         this.cleanupStaleClients();
+        const latest = this.getLatestClient();
+        const active = this.getActiveClient();
         const clients = Array.from(this.clients.values()).map((client) => ({
             id: client.id,
             url: client.url,
@@ -113,15 +163,63 @@ class RuntimeBridgeManager {
             connectedAt: new Date(client.connectedAt).toISOString(),
             lastSeen: new Date(client.lastSeen).toISOString(),
             support: client.support,
+            active: client.id === this.activeClientId,
             hasPendingPoll: !!client.pendingPoll,
             queuedCommands: client.queue.length
         }));
         return {
             success: true,
             connected: clients.length > 0,
-            latestClientId: this.getLatestClient() ? this.getLatestClient().id : null,
-            activeClientId: this.getActiveClient() ? this.getActiveClient().id : null,
+            latestClientId: latest ? latest.id : null,
+            activeClientId: active ? active.id : null,
             clients
+        };
+    }
+
+    listClients() {
+        const status = this.getStatus();
+        return {
+            success: true,
+            data: Object.assign({}, status, {
+                minimumBridgeVersion: this.minimumBridgeVersion
+            })
+        };
+    }
+
+    selectClient(clientId) {
+        this.cleanupStaleClients();
+        const id = String(clientId || '').trim();
+        if (!id) {
+            return {
+                success: false,
+                error: '缺少 clientId。'
+            };
+        }
+        const client = this.clients.get(id);
+        if (!client) {
+            return {
+                success: false,
+                error: `未找到运行态页面：${id}`
+            };
+        }
+        if (!this.isUsableClient(client)) {
+            return {
+                success: false,
+                error: `运行态页面不可用或版本过旧：${id}`,
+                data: {
+                    client: this.summarizeClient(client),
+                    minimumBridgeVersion: this.minimumBridgeVersion
+                }
+            };
+        }
+        this.activeClientId = id;
+        return {
+            success: true,
+            message: '已切换运行态目标页面。',
+            data: {
+                activeClientId: id,
+                client: this.summarizeClient(client)
+            }
         };
     }
 
@@ -205,6 +303,15 @@ class RuntimeBridgeManager {
         if (action === 'clear_clients') {
             return this.clearClients();
         }
+        if (action === 'list_clients') {
+            return this.listClients();
+        }
+        if (action === 'select_client') {
+            return this.selectClient(args && (args.clientId || args.id));
+        }
+        if (action === 'open_injected_preview') {
+            return this.openInjectedPreview(args || {});
+        }
         if (action === 'check_support' && this.clients.size === 0) {
             return {
                 success: true,
@@ -220,11 +327,24 @@ class RuntimeBridgeManager {
             return await this.executeConsoleLogs(args || {});
         }
 
-        const client = this.getActiveClient();
+        const requestedClientId = args && (args.clientId || args.targetClientId);
+        const client = requestedClientId ? this.clients.get(String(requestedClientId)) : this.getActiveClient();
         if (!client) {
             return {
                 success: false,
-                error: '尚未连接 Cocos 运行态网页，请先在预览页面注入 runtime bridge 脚本。'
+                error: requestedClientId
+                    ? `未找到指定运行态页面：${requestedClientId}`
+                    : '尚未连接 Cocos 运行态网页，请先在预览页面注入 runtime bridge 脚本。'
+            };
+        }
+        if (!this.isUsableClient(client)) {
+            return {
+                success: false,
+                error: `运行态页面不可用或版本过旧：${client.id}`,
+                data: {
+                    client: this.summarizeClient(client),
+                    minimumBridgeVersion: this.minimumBridgeVersion
+                }
             };
         }
 
@@ -255,7 +375,10 @@ class RuntimeBridgeManager {
 
     async executeConsoleLogs(args) {
         this.cleanupStaleClients();
-        let clients = Array.from(this.clients.values()).filter((client) => {
+        const requestedClientId = args && (args.clientId || args.targetClientId);
+        let clients = requestedClientId
+            ? [this.clients.get(String(requestedClientId))].filter(Boolean)
+            : Array.from(this.clients.values()).filter((client) => {
             const support = client.support || {};
             return this.isUsableClient(client)
                 && !!client.pendingPoll
@@ -354,6 +477,23 @@ class RuntimeBridgeManager {
         return latest;
     }
 
+    summarizeClient(client) {
+        if (!client) {
+            return null;
+        }
+        return {
+            id: client.id,
+            url: client.url,
+            title: client.title,
+            connectedAt: new Date(client.connectedAt).toISOString(),
+            lastSeen: new Date(client.lastSeen).toISOString(),
+            support: client.support,
+            active: client.id === this.activeClientId,
+            hasPendingPoll: !!client.pendingPoll,
+            queuedCommands: client.queue.length
+        };
+    }
+
     getActiveClient() {
         const active = this.activeClientId ? this.clients.get(this.activeClientId) : null;
         if (this.isUsableClient(active)) {
@@ -388,7 +528,7 @@ class RuntimeBridgeManager {
                 score += 25;
             }
             if (this.compareBridgeVersion(support.bridgeVersion, this.minimumBridgeVersion) >= 0) {
-                score += 25;
+                score += 1000;
             }
             if (!best || score > bestScore || score === bestScore && client.lastSeen > best.lastSeen) {
                 best = client;

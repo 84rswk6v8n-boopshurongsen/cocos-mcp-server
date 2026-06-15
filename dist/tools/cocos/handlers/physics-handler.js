@@ -23,7 +23,13 @@ const ACTIONS = [
     'validate_physics_scene',
     'create_physics_material',
     'assign_physics_material',
-    'inspect_physics_material'
+    'inspect_physics_material',
+    'debug_draw_ray',
+    'debug_draw_collider',
+    'debug_draw_all_colliders',
+    'debug_add_collider',
+    'debug_clear_drawings',
+    'debug_set_visibility'
 ];
 
 const RIGIDBODY_3D = 'cc.RigidBody';
@@ -351,7 +357,8 @@ class PhysicsHandler {
             description: [
                 'Cocos 物理配置工具，用于检查和配置刚体、碰撞体、触发区域和投射物碰撞。',
                 '该工具只处理物理组件配置，不生成战斗、AI、对象池或关卡脚本逻辑。',
-                'Actions: info, list, add_rigidbody, add_collider, set_rigidbody, set_collider, setup_trigger_zone, setup_projectile_collision, validate_physics, list_collision_groups, set_collision_group, set_collision_mask, inspect_physics_settings, set_physics_debug, validate_physics_scene, create_physics_material, assign_physics_material, inspect_physics_material.'
+                '使用 debug_draw_* 可视化调试前，先通过 cocos_runtime.open_injected_preview 打开系统外部浏览器自动注入预览页；不要使用 Codex 内部浏览器查看调试绘制。',
+                'Actions: info, list, add_rigidbody, add_collider, set_rigidbody, set_collider, setup_trigger_zone, setup_projectile_collision, validate_physics, list_collision_groups, set_collision_group, set_collision_mask, inspect_physics_settings, set_physics_debug, validate_physics_scene, create_physics_material, assign_physics_material, inspect_physics_material, debug_draw_ray, debug_draw_collider, debug_draw_all_colliders, debug_add_collider, debug_clear_drawings, debug_set_visibility.'
             ].join('\n'),
             inputSchema: {
                 type: 'object',
@@ -409,6 +416,114 @@ class PhysicsHandler {
                     maxNodes: {
                         type: 'number',
                         description: 'list/validate_physics 最多扫描节点数量，默认 200'
+                    },
+                    origin: {
+                        type: 'object',
+                        description: 'debug_draw_ray 射线起点 {x,y,z}'
+                    },
+                    originNode: {
+                        type: 'string',
+                        description: 'debug_draw_ray start node; uses collider center when possible'
+                    },
+                    fromNode: {
+                        type: 'string',
+                        description: 'debug_draw_ray alias of originNode'
+                    },
+                    target: {
+                        type: 'object',
+                        description: 'debug_draw_ray target point {x,y,z}; direction and distance are calculated from origin'
+                    },
+                    targetNode: {
+                        type: 'string',
+                        description: 'debug_draw_ray target node; uses collider center when possible'
+                    },
+                    toNode: {
+                        type: 'string',
+                        description: 'debug_draw_ray alias of targetNode'
+                    },
+                    originOffset: {
+                        type: 'object',
+                        description: 'debug_draw_ray optional origin node offset {x,y,z}'
+                    },
+                    targetOffset: {
+                        type: 'object',
+                        description: 'debug_draw_ray optional target node offset {x,y,z}'
+                    },
+                    direction: {
+                        type: 'object',
+                        description: 'debug_draw_ray 射线方向 {x,y,z}'
+                    },
+                    maxDistance: {
+                        type: 'number',
+                        description: 'debug_draw_ray 射线长度'
+                    },
+                    raycast: {
+                        type: 'boolean',
+                        description: 'debug_draw_ray raycast hit test, default true'
+                    },
+                    live: {
+                        type: 'boolean',
+                        description: 'debug_draw_ray/debug_draw_collider/debug_draw_all_colliders 是否每帧实时重新采样，默认 false'
+                    },
+                    queryTrigger: {
+                        type: 'boolean',
+                        description: 'debug_draw_ray include trigger colliders, default true'
+                    },
+                    color: {
+                        oneOf: [{ type: 'string' }, { type: 'object' }],
+                        description: '调试绘制颜色，例如 #ff3355 或 {r,g,b,a}'
+                    },
+                    hitColor: {
+                        oneOf: [{ type: 'string' }, { type: 'object' }],
+                        description: 'debug_draw_ray hit marker color, default yellow'
+                    },
+                    hitLabel: {
+                        type: 'string',
+                        description: 'debug_draw_ray hit marker label'
+                    },
+                    duration: {
+                        type: 'number',
+                        description: '调试绘制持续时间，毫秒；0 表示持续到手动清除'
+                    },
+                    thickness: {
+                        type: 'number',
+                        description: '调试绘制线宽'
+                    },
+                    showLabel: {
+                        type: 'boolean',
+                        description: '是否显示调试标签，默认 true'
+                    },
+                    enabled: {
+                        type: 'boolean',
+                        description: 'debug_set_visibility 是否启用全部调试绘制显示'
+                    },
+                    showRays: {
+                        type: 'boolean',
+                        description: 'debug_set_visibility 是否显示射线'
+                    },
+                    showColliders: {
+                        type: 'boolean',
+                        description: 'debug_set_visibility 是否显示碰撞体'
+                    },
+                    panelVisible: {
+                        type: 'boolean',
+                        description: 'debug_set_visibility 是否显示可拖动调试面板'
+                    },
+                    includeInactive: {
+                        type: 'boolean',
+                        description: 'debug_draw_all_colliders 是否包含 inactive 节点'
+                    },
+                    maxCount: {
+                        type: 'number',
+                        description: 'debug_draw_all_colliders 最大绘制碰撞体数量，默认 200'
+                    },
+                    clientId: {
+                        type: 'string',
+                        description: 'Runtime client id. Debug drawing will be sent to this connected preview page.'
+                    },
+                    targetClientId: {
+                        type: 'string',
+                        description: 'Alias of clientId for selecting the runtime target page.'
                     },
                     componentScope: {
                         type: 'string',
@@ -495,6 +610,13 @@ class PhysicsHandler {
                 return await this.assignPhysicsMaterial(args);
             case 'inspect_physics_material':
                 return await this.inspectPhysicsMaterial(args);
+            case 'debug_draw_ray':
+            case 'debug_draw_collider':
+            case 'debug_draw_all_colliders':
+            case 'debug_add_collider':
+            case 'debug_clear_drawings':
+            case 'debug_set_visibility':
+                return await this.executeRuntimeDebug(args.action, args);
             default:
                 return fail(`未知物理操作：${args.action || '(empty)'}`);
         }
@@ -1030,6 +1152,18 @@ class PhysicsHandler {
             issueCount: issues.length,
             issues
         });
+    }
+
+    async executeRuntimeDebug(action, args) {
+        const manager = globalThis.__cocosMcpRuntimeBridgeManager;
+        if (!manager || typeof manager.execute !== 'function') {
+            return fail('运行态桥接管理器尚未初始化，请先启动 MCP 服务，并通过 cocos_runtime.open_injected_preview 打开外部浏览器自动注入预览页。');
+        }
+        const result = await manager.execute(action, args || {});
+        if (result && result.success === false && /bridge|版本|过旧|0\.1\./i.test(String(result.error || ''))) {
+            return result;
+        }
+        return result;
     }
 
     materialDbUrl(args) {
