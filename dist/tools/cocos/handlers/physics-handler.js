@@ -358,6 +358,8 @@ class PhysicsHandler {
                 'Cocos 物理配置工具，用于检查和配置刚体、碰撞体、触发区域和投射物碰撞。',
                 '该工具只处理物理组件配置，不生成战斗、AI、对象池或关卡脚本逻辑。',
                 '使用 debug_draw_* 可视化调试前，先通过 cocos_runtime.open_injected_preview 打开系统外部浏览器自动注入预览页；不要使用 Codex 内部浏览器查看调试绘制。',
+                '射线调试优先使用 debug_draw_ray，并传 originNode + targetNode；移动节点传 live:true，工具会每帧重新采样射线、命中点和命中节点。',
+                'debug_draw_ray 默认执行 raycast 命中检测，返回 hitInfo.result.node/collider/point/distance，并在画面中显示“命中：节点名”。建议同时调用 debug_draw_all_colliders 显示碰撞体线框。',
                 'Actions: info, list, add_rigidbody, add_collider, set_rigidbody, set_collider, setup_trigger_zone, setup_projectile_collision, validate_physics, list_collision_groups, set_collision_group, set_collision_mask, inspect_physics_settings, set_physics_debug, validate_physics_scene, create_physics_material, assign_physics_material, inspect_physics_material, debug_draw_ray, debug_draw_collider, debug_draw_all_colliders, debug_add_collider, debug_clear_drawings, debug_set_visibility.'
             ].join('\n'),
             inputSchema: {
@@ -423,31 +425,31 @@ class PhysicsHandler {
                     },
                     originNode: {
                         type: 'string',
-                        description: 'debug_draw_ray start node; uses collider center when possible'
+                        description: 'debug_draw_ray 射线起点节点名称/路径/UUID；优先使用该节点碰撞体中心作为起点'
                     },
                     fromNode: {
                         type: 'string',
-                        description: 'debug_draw_ray alias of originNode'
+                        description: 'debug_draw_ray 的 originNode 别名'
                     },
                     target: {
                         type: 'object',
-                        description: 'debug_draw_ray target point {x,y,z}; direction and distance are calculated from origin'
+                        description: 'debug_draw_ray 射线目标点 {x,y,z}；会根据 origin 自动计算方向和距离'
                     },
                     targetNode: {
                         type: 'string',
-                        description: 'debug_draw_ray target node; uses collider center when possible'
+                        description: 'debug_draw_ray 射线目标节点名称/路径/UUID；优先使用该节点碰撞体中心作为目标点'
                     },
                     toNode: {
                         type: 'string',
-                        description: 'debug_draw_ray alias of targetNode'
+                        description: 'debug_draw_ray 的 targetNode 别名'
                     },
                     originOffset: {
                         type: 'object',
-                        description: 'debug_draw_ray optional origin node offset {x,y,z}'
+                        description: 'debug_draw_ray 起点节点偏移 {x,y,z}，用于从枪口、眼睛、技能挂点等位置发射'
                     },
                     targetOffset: {
                         type: 'object',
-                        description: 'debug_draw_ray optional target node offset {x,y,z}'
+                        description: 'debug_draw_ray 目标节点偏移 {x,y,z}'
                     },
                     direction: {
                         type: 'object',
@@ -459,15 +461,15 @@ class PhysicsHandler {
                     },
                     raycast: {
                         type: 'boolean',
-                        description: 'debug_draw_ray raycast hit test, default true'
+                        description: 'debug_draw_ray 是否执行物理射线命中检测，默认 true；命中结果在 hitInfo.result 中返回'
                     },
                     live: {
                         type: 'boolean',
-                        description: 'debug_draw_ray/debug_draw_collider/debug_draw_all_colliders 是否每帧实时重新采样，默认 false'
+                        description: 'debug_draw_ray/debug_draw_collider/debug_draw_all_colliders 是否每帧实时重新采样，移动节点调试建议设为 true，默认 false'
                     },
                     queryTrigger: {
                         type: 'boolean',
-                        description: 'debug_draw_ray include trigger colliders, default true'
+                        description: 'debug_draw_ray 是否检测 trigger 碰撞体，默认 true'
                     },
                     color: {
                         oneOf: [{ type: 'string' }, { type: 'object' }],
@@ -475,11 +477,11 @@ class PhysicsHandler {
                     },
                     hitColor: {
                         oneOf: [{ type: 'string' }, { type: 'object' }],
-                        description: 'debug_draw_ray hit marker color, default yellow'
+                        description: 'debug_draw_ray 命中点标记颜色，默认黄色'
                     },
                     hitLabel: {
                         type: 'string',
-                        description: 'debug_draw_ray hit marker label'
+                        description: 'debug_draw_ray 命中点标签；不传时自动显示“命中：节点名”'
                     },
                     duration: {
                         type: 'number',

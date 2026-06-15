@@ -65,6 +65,31 @@ Cocos MCP Server 是一个面向 Cocos Creator 3.7+ / 3.8.x 的 MCP 插件，让
 - `debug_set_visibility`：控制物理调试面板、射线和碰撞体显示状态。
 - `debug_clear_drawings`：清除当前运行态调试绘制。
 
+射线调试推荐流程：
+
+1. 使用 `cocos_runtime.open_injected_preview` 打开外部浏览器自动注入预览页。
+2. 使用 `cocos_runtime.wait_until_ready` 等待运行态场景就绪。
+3. 使用 `cocos_physics.debug_set_visibility` 打开物理调试面板。
+4. 使用 `cocos_physics.debug_draw_all_colliders` 绘制场景碰撞体线框。
+5. 使用 `cocos_physics.debug_draw_ray` 绘制射线并检查命中结果。
+
+移动中的节点建议给 `debug_draw_ray` 传 `live: true`，这样射线每帧会重新采样起点、目标点和命中点。按节点绘制时优先使用 `originNode` 和 `targetNode`，工具会优先使用节点碰撞体中心；如果命中物体，返回结果会包含 `hitInfo.result.node`、`hitInfo.result.collider`、`hitInfo.result.point` 和 `hitInfo.result.distance`，画面中也会显示“命中：节点名”。
+
+示例：
+
+```json
+{
+  "action": "debug_draw_ray",
+  "originNode": "这个是测试的节点-001",
+  "targetNode": "这个是测试的节点-003",
+  "live": true,
+  "raycast": true,
+  "maxDistance": 20,
+  "label": "射线：001 -> 003",
+  "showLabel": true
+}
+```
+
 ## 使用建议
 
 - 修改 3 个以上节点时优先使用 `node` 的 `batch_modify`。
