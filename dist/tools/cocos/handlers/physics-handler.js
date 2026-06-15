@@ -481,7 +481,7 @@ class PhysicsHandler {
                     },
                     hitLabel: {
                         type: 'string',
-                        description: 'debug_draw_ray 命中点标签；不传时自动显示“命中：节点名”'
+                        description: 'debug_draw_ray 命中点标签；不传时自动显示“命中：节点名”，支持 {node}/{collider}/{distance} 占位符'
                     },
                     duration: {
                         type: 'number',
@@ -510,6 +510,18 @@ class PhysicsHandler {
                     panelVisible: {
                         type: 'boolean',
                         description: 'debug_set_visibility 是否显示可拖动调试面板'
+                    },
+                    depthTest: {
+                        type: 'boolean',
+                        description: 'debug_set_visibility 是否开启深度遮挡显示；true 会被模型遮挡，false 始终置顶显示'
+                    },
+                    alwaysOnTop: {
+                        type: 'boolean',
+                        description: 'debug_set_visibility 是否始终置顶显示；true 等价于 depthTest:false'
+                    },
+                    sceneRender: {
+                        type: 'boolean',
+                        description: 'debug_set_visibility 是否在深度遮挡模式下使用 Cocos 场景内细杆 Mesh 渲染线框；默认 true'
                     },
                     includeInactive: {
                         type: 'boolean',

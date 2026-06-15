@@ -1,7 +1,7 @@
 'use strict';
 
 (function () {
-    const VERSION = '0.1.19';
+    const VERSION = '0.1.22';
     const currentScript = document.currentScript;
     const scriptUrl = currentScript && currentScript.src ? currentScript.src : '';
     const baseUrl = scriptUrl ? scriptUrl.replace(/\/runtime\/bridge\.js(?:\?.*)?$/, '') : 'http://127.0.0.1:3300';
@@ -28,6 +28,8 @@
         enabled: true,
         visibleRays: true,
         visibleColliders: true,
+        sceneRenderEnabled: true,
+        depthTest: false,
         panelVisible: true,
         panelX: 16,
         panelY: 72
@@ -35,6 +37,8 @@
     debugDrawState.enabled = debugDrawState.enabled !== false;
     debugDrawState.visibleRays = debugDrawState.visibleRays !== false;
     debugDrawState.visibleColliders = debugDrawState.visibleColliders !== false;
+    debugDrawState.sceneRenderEnabled = debugDrawState.sceneRenderEnabled !== false;
+    debugDrawState.depthTest = !!debugDrawState.depthTest;
     debugDrawState.panelVisible = debugDrawState.panelVisible !== false;
     debugDrawState.panelX = Number(debugDrawState.panelX) || 16;
     debugDrawState.panelY = Number(debugDrawState.panelY) || 72;
@@ -1022,8 +1026,20 @@
         return { x: left.x + right.x, y: left.y + right.y, z: left.z + right.z };
     }
 
+    function subVec3(left, right) {
+        return { x: left.x - right.x, y: left.y - right.y, z: left.z - right.z };
+    }
+
     function scaleVec3(value, scale) {
         return { x: value.x * scale, y: value.y * scale, z: value.z * scale };
+    }
+
+    function crossVec3(left, right) {
+        return {
+            x: left.y * right.z - left.z * right.y,
+            y: left.z * right.x - left.x * right.z,
+            z: left.x * right.y - left.y * right.x
+        };
     }
 
     function normalizeVec3(value) {
@@ -1111,6 +1127,9 @@
         if (debugDrawState.panel) {
             debugDrawState.panel.style.display = debugDrawState.panelVisible ? 'block' : 'none';
         }
+        if (debugDrawState.sceneRoot && debugDrawState.sceneRoot.isValid) {
+            debugDrawState.sceneRoot.active = debugDrawState.enabled !== false && debugDrawState.sceneRenderEnabled !== false && !!debugDrawState.depthTest;
+        }
     }
 
     function updateDebugPanel() {
@@ -1121,6 +1140,8 @@
         const rays = panel.querySelector('[data-debug-toggle="rays"]');
         const colliders = panel.querySelector('[data-debug-toggle="colliders"]');
         const enabled = panel.querySelector('[data-debug-toggle="enabled"]');
+        const alwaysTop = panel.querySelector('[data-debug-toggle="alwaysTop"]');
+        const depthTest = panel.querySelector('[data-debug-toggle="depthTest"]');
         const clear = panel.querySelector('[data-debug-clear="1"]');
         if (rays) {
             rays.checked = debugDrawState.visibleRays !== false;
@@ -1130,6 +1151,12 @@
         }
         if (enabled) {
             enabled.checked = debugDrawState.enabled !== false;
+        }
+        if (alwaysTop) {
+            alwaysTop.checked = !debugDrawState.depthTest;
+        }
+        if (depthTest) {
+            depthTest.checked = !!debugDrawState.depthTest;
         }
         if (clear) {
             clear.textContent = debugDrawState.drawings.length
@@ -1167,7 +1194,9 @@
             '<div data-debug-drag="1" style="cursor:move;padding:7px 9px;background:rgba(0,229,255,0.16);font-weight:600;user-select:none;">MCP 物理调试</div>',
             '<label style="display:flex;align-items:center;gap:6px;padding:8px 9px 0;"><input data-debug-toggle="enabled" type="checkbox">启用显示</label>',
             '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="rays" type="checkbox">显示射线</label>',
-            '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 8px;"><input data-debug-toggle="colliders" type="checkbox">显示碰撞体</label>',
+            '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="colliders" type="checkbox">显示碰撞体</label>',
+            '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="alwaysTop" type="checkbox">始终置顶显示</label>',
+            '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 8px;"><input data-debug-toggle="depthTest" type="checkbox">深度遮挡显示</label>',
             '<button data-debug-clear="1" style="margin:0 9px 8px;padding:3px 8px;border:1px solid #40505a;background:#151f25;color:#e5faff;cursor:pointer;">清除绘制</button>'
         ].join('');
         document.documentElement.appendChild(panel);
@@ -1197,6 +1226,8 @@
         const enabled = panel.querySelector('[data-debug-toggle="enabled"]');
         const rays = panel.querySelector('[data-debug-toggle="rays"]');
         const colliders = panel.querySelector('[data-debug-toggle="colliders"]');
+        const alwaysTop = panel.querySelector('[data-debug-toggle="alwaysTop"]');
+        const depthTest = panel.querySelector('[data-debug-toggle="depthTest"]');
         if (enabled) {
             enabled.addEventListener('change', () => {
                 debugDrawState.enabled = !!enabled.checked;
@@ -1212,6 +1243,20 @@
         if (colliders) {
             colliders.addEventListener('change', () => {
                 debugDrawState.visibleColliders = !!colliders.checked;
+                redrawDebugDrawings();
+            });
+        }
+        if (alwaysTop) {
+            alwaysTop.addEventListener('change', () => {
+                debugDrawState.depthTest = !alwaysTop.checked;
+                updateDebugPanel();
+                redrawDebugDrawings();
+            });
+        }
+        if (depthTest) {
+            depthTest.addEventListener('change', () => {
+                debugDrawState.depthTest = !!depthTest.checked;
+                updateDebugPanel();
                 redrawDebugDrawings();
             });
         }
@@ -1311,6 +1356,276 @@
         return fallback || '#00e5ff';
     }
 
+    function cssColorToCcColor(value, fallback) {
+        const cc = getCc();
+        if (!cc || !cc.Color) {
+            return null;
+        }
+        const text = String(value || fallback || '#00e5ff').trim();
+        let r = 0;
+        let g = 229;
+        let b = 255;
+        let a = 255;
+        const hex = text.match(/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+        if (hex) {
+            let raw = hex[1];
+            if (raw.length === 3) {
+                raw = raw.split('').map((ch) => ch + ch).join('');
+            }
+            r = parseInt(raw.slice(0, 2), 16);
+            g = parseInt(raw.slice(2, 4), 16);
+            b = parseInt(raw.slice(4, 6), 16);
+            if (raw.length >= 8) {
+                a = parseInt(raw.slice(6, 8), 16);
+            }
+        }
+        else {
+            const rgba = text.match(/rgba?\(([^)]+)\)/i);
+            if (rgba) {
+                const parts = rgba[1].split(',').map((item) => Number(item.trim()));
+                r = Math.max(0, Math.min(255, parts[0] || 0));
+                g = Math.max(0, Math.min(255, parts[1] || 0));
+                b = Math.max(0, Math.min(255, parts[2] || 0));
+                if (parts[3] !== undefined) {
+                    a = Math.max(0, Math.min(255, parts[3] <= 1 ? parts[3] * 255 : parts[3]));
+                }
+            }
+        }
+        return new cc.Color(r, g, b, a);
+    }
+
+    function ensureSceneDebugRoot() {
+        const cc = getCc();
+        const scene = getScene();
+        if (!cc || !scene || !cc.Node) {
+            return null;
+        }
+        let root = debugDrawState.sceneRoot;
+        if (!root || !root.isValid) {
+            root = scene.getChildByName && scene.getChildByName('__MCP_PhysicsDebug3D__') || null;
+        }
+        if (!root || !root.isValid) {
+            root = new cc.Node('__MCP_PhysicsDebug3D__');
+            try {
+                scene.addChild(root);
+            } catch (_) {
+                return null;
+            }
+        }
+        debugDrawState.sceneRoot = root;
+        root.active = debugDrawState.enabled !== false && debugDrawState.sceneRenderEnabled !== false && !!debugDrawState.depthTest;
+        return root;
+    }
+
+    function createLineMaterial(color, depthTest) {
+        const cc = getCc();
+        if (!cc || !cc.Material || !cc.builtinResMgr) {
+            return null;
+        }
+        const key = `${color}|${depthTest ? 'depth' : 'top'}`;
+        debugDrawState.materialCache = debugDrawState.materialCache || {};
+        if (debugDrawState.materialCache[key] && debugDrawState.materialCache[key].isValid !== false) {
+            return debugDrawState.materialCache[key];
+        }
+        try {
+            const effect = cc.builtinResMgr.get('builtin-unlit');
+            const material = new cc.Material();
+            material.initialize({ effectAsset: effect });
+            if (typeof material.setProperty === 'function') {
+                material.setProperty('mainColor', cssColorToCcColor(color, '#00e5ff'));
+            }
+            if (typeof material.overridePipelineStates === 'function') {
+                const rasterizerState = {};
+                if (cc.gfx && cc.gfx.CullMode && cc.gfx.CullMode.NONE !== undefined) {
+                    rasterizerState.cullMode = cc.gfx.CullMode.NONE;
+                }
+                material.overridePipelineStates({
+                    rasterizerState,
+                    depthStencilState: {
+                        depthTest: !!depthTest,
+                        depthWrite: false
+                    }
+                });
+            }
+            debugDrawState.materialCache[key] = material;
+            return material;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function destroySceneRenderItem(item) {
+        const render = item && item.sceneRender;
+        if (render && render.node) {
+            try {
+                render.node.destroy();
+            } catch (_) {}
+        }
+        if (item) {
+            item.sceneRender = null;
+        }
+    }
+
+    function destroySceneRenderItems(items) {
+        for (const item of items || []) {
+            destroySceneRenderItem(item);
+        }
+    }
+
+    function sceneItemVisible(item) {
+        if (!item || debugDrawState.enabled === false) {
+            return false;
+        }
+        if (item.type === 'ray' && debugDrawState.visibleRays === false) {
+            return false;
+        }
+        if (item.type === 'collider' && debugDrawState.visibleColliders === false) {
+            return false;
+        }
+        return true;
+    }
+
+    function markerEdges(point, size) {
+        const radius = Math.max(0.04, Math.min(1, Number(size) || 0.18));
+        return [
+            [{ x: point.x - radius, y: point.y, z: point.z }, { x: point.x + radius, y: point.y, z: point.z }],
+            [{ x: point.x, y: point.y - radius, z: point.z }, { x: point.x, y: point.y + radius, z: point.z }],
+            [{ x: point.x, y: point.y, z: point.z - radius }, { x: point.x, y: point.y, z: point.z + radius }]
+        ];
+    }
+
+    function sceneEdgesForItem(item) {
+        if (!item) {
+            return [];
+        }
+        if (item.type === 'ray') {
+            const lineEnd = item.hit && item.hit.point ? item.hit.point : item.end;
+            const edges = item.origin && lineEnd ? [[item.origin, lineEnd]] : [];
+            if (item.hit && item.hit.point) {
+                edges.push(...markerEdges(item.hit.point, item.hitWorldSize || 0.18));
+            }
+            return edges;
+        }
+        if (item.type === 'collider') {
+            return item.edges || [];
+        }
+        return [];
+    }
+
+    function pushTriangle(indices, a, b, c) {
+        indices.push(a, b, c, c, b, a);
+    }
+
+    function pushQuad(indices, a, b, c, d) {
+        pushTriangle(indices, a, b, c);
+        pushTriangle(indices, a, c, d);
+    }
+
+    function buildEdgeBeamMesh(edges, thickness) {
+        const positions = [];
+        const indices = [];
+        const half = Math.max(0.012, Math.min(0.12, (Number(thickness) || 2) * 0.012));
+        for (const edge of edges) {
+            if (!edge || !edge[0] || !edge[1]) {
+                continue;
+            }
+            const a = vec3From(edge[0], null);
+            const b = vec3From(edge[1], null);
+            if (!a || !b) {
+                continue;
+            }
+            const dirRaw = subVec3(b, a);
+            const length = Math.sqrt(dirRaw.x * dirRaw.x + dirRaw.y * dirRaw.y + dirRaw.z * dirRaw.z);
+            if (!Number.isFinite(length) || length < 0.0001) {
+                continue;
+            }
+            const dir = scaleVec3(dirRaw, 1 / length);
+            const reference = Math.abs(dir.y) < 0.86 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
+            const side = normalizeVec3(crossVec3(dir, reference));
+            const up = normalizeVec3(crossVec3(side, dir));
+            const s = scaleVec3(side, half);
+            const u = scaleVec3(up, half);
+            const base = positions.length / 3;
+            const corners = [
+                addVec3(addVec3(a, s), u),
+                addVec3(addVec3(a, s), scaleVec3(u, -1)),
+                addVec3(addVec3(a, scaleVec3(s, -1)), scaleVec3(u, -1)),
+                addVec3(addVec3(a, scaleVec3(s, -1)), u),
+                addVec3(addVec3(b, s), u),
+                addVec3(addVec3(b, s), scaleVec3(u, -1)),
+                addVec3(addVec3(b, scaleVec3(s, -1)), scaleVec3(u, -1)),
+                addVec3(addVec3(b, scaleVec3(s, -1)), u)
+            ];
+            for (const corner of corners) {
+                positions.push(corner.x, corner.y, corner.z);
+            }
+            pushQuad(indices, base + 0, base + 1, base + 5, base + 4);
+            pushQuad(indices, base + 1, base + 2, base + 6, base + 5);
+            pushQuad(indices, base + 2, base + 3, base + 7, base + 6);
+            pushQuad(indices, base + 3, base + 0, base + 4, base + 7);
+            pushQuad(indices, base + 0, base + 3, base + 2, base + 1);
+            pushQuad(indices, base + 4, base + 5, base + 6, base + 7);
+        }
+        return positions.length ? { positions, indices } : null;
+    }
+
+    function syncSceneDebugDrawing(item) {
+        if (debugDrawState.sceneRenderEnabled === false || !debugDrawState.depthTest) {
+            destroySceneRenderItem(item);
+            return false;
+        }
+        const cc = getCc();
+        if (!cc || !cc.utils || typeof cc.utils.createMesh !== 'function' || !cc.ModelComponent) {
+            destroySceneRenderItem(item);
+            return false;
+        }
+        const root = ensureSceneDebugRoot();
+        if (!root) {
+            destroySceneRenderItem(item);
+            return false;
+        }
+        const visible = sceneItemVisible(item);
+        const edges = visible ? sceneEdgesForItem(item) : [];
+        if (!edges.length) {
+            if (item.sceneRender && item.sceneRender.node) {
+                item.sceneRender.node.active = false;
+            }
+            return true;
+        }
+        let render = item.sceneRender;
+        if (!render || !render.node || !render.node.isValid) {
+            const node = new cc.Node(`MCP_Debug_${item.id}`);
+            root.addChild(node);
+            const model = node.addComponent(cc.ModelComponent);
+            render = item.sceneRender = { node, model };
+        }
+        const meshData = buildEdgeBeamMesh(edges, item.thickness);
+        if (!meshData || !meshData.positions.length) {
+            render.node.active = false;
+            return true;
+        }
+        const lineColor = item.type === 'ray' && item.hit && item.hit.point ? (item.hitColor || '#ffcc00') : (item.color || '#00e5ff');
+        try {
+            render.node.active = true;
+            const mesh = cc.utils.createMesh({
+                positions: meshData.positions,
+                indices: meshData.indices
+            });
+            render.model.mesh = mesh;
+            const material = createLineMaterial(lineColor, !!debugDrawState.depthTest);
+            if (material && typeof render.model.setMaterial === 'function') {
+                render.model.setMaterial(material, 0);
+            }
+            render.depthTest = !!debugDrawState.depthTest;
+            render.edgeCount = edges.length;
+            return true;
+        } catch (error) {
+            item.sceneRenderError = error && error.message ? error.message : String(error);
+            destroySceneRenderItem(item);
+            return false;
+        }
+    }
+
     function addDebugDrawing(drawing, args) {
         ensureDebugCanvas();
         ensureDebugPanel();
@@ -1399,9 +1714,12 @@
         }
         const lineEnd = item.hit && item.hit.point ? item.hit.point : item.end;
         const lineColor = item.hit && item.hit.point ? (item.hitColor || '#ffcc00') : item.color;
-        const projected = drawLine(ctx, item.origin, lineEnd, lineColor, item.thickness);
+        const sceneSynced = syncSceneDebugDrawing(item);
+        const projected = sceneSynced ? projectWorld(item.end) : drawLine(ctx, item.origin, lineEnd, lineColor, item.thickness);
         if (item.hit && item.hit.point) {
-            drawMarker(ctx, item.hit.point, item.hitColor || '#ffcc00', item.hitSize || 8);
+            if (!sceneSynced) {
+                drawMarker(ctx, item.hit.point, item.hitColor || '#ffcc00', item.hitSize || 8);
+            }
             if (item.showLabel) {
                 drawLabel(ctx, item.hitLabel || '命中', item.hit.point, item.hitColor || '#ffcc00');
             }
@@ -1418,8 +1736,11 @@
                 return;
             }
         }
-        for (const edge of item.edges || []) {
-            drawLine(ctx, edge[0], edge[1], item.color, item.thickness);
+        const sceneSynced = syncSceneDebugDrawing(item);
+        if (!sceneSynced) {
+            for (const edge of item.edges || []) {
+                drawLine(ctx, edge[0], edge[1], item.color, item.thickness);
+            }
         }
         if (item.showLabel) {
             drawLabel(ctx, item.label || item.node || 'collider', item.labelWorld || item.center || (item.edges && item.edges[0] && item.edges[0][0]), item.color);
@@ -1444,12 +1765,18 @@
         for (const item of debugDrawState.drawings) {
             if (item.type === 'ray') {
                 if (debugDrawState.visibleRays === false) {
+                    if (item.sceneRender && item.sceneRender.node) {
+                        item.sceneRender.node.active = false;
+                    }
                     continue;
                 }
                 drawRayItem(ctx, item);
             }
             else if (item.type === 'collider') {
                 if (debugDrawState.visibleColliders === false) {
+                    if (item.sceneRender && item.sceneRender.node) {
+                        item.sceneRender.node.active = false;
+                    }
                     continue;
                 }
                 drawColliderItem(ctx, item);
@@ -2112,16 +2439,32 @@
             const text = String(value || '').trim().toLowerCase();
             return text === 'hit' || text === '命中';
         };
+        const formatHitLabel = (template) => {
+            if (!hit) {
+                return '';
+            }
+            const nodeName = hit.node || '';
+            const colliderName = hit.collider || '';
+            const distance = Number.isFinite(Number(hit.distance)) ? Number(hit.distance).toFixed(2) : '';
+            const fallback = nodeName || colliderName || '碰撞体';
+            const text = String(template || '').trim();
+            if (!text || badLabel(text) || genericHitLabel(text)) {
+                return `命中：${fallback}`;
+            }
+            if (!/[{](node|collider|distance)[}]/.test(text)) {
+                return text;
+            }
+            return text
+                .replace(/\{node\}/g, fallback)
+                .replace(/\{collider\}/g, colliderName || fallback)
+                .replace(/\{distance\}/g, distance);
+        };
         const rayLabel = args.label && !badLabel(args.label)
             ? args.label
             : originRef && targetRef
                 ? `射线：${originRef} -> ${targetRef}`
                 : hit ? '射线' : '射线：未命中';
-        const hitLabel = hit
-            ? args.hitLabel && !badLabel(args.hitLabel) && !genericHitLabel(args.hitLabel)
-                ? args.hitLabel
-                : `命中：${hit.node || hit.collider || '碰撞体'}`
-            : '';
+        const hitLabel = hit ? formatHitLabel(args.hitLabel) : '';
         return {
             success: true,
             data: {
@@ -2324,6 +2667,7 @@
 
     function togglePanelDebugDrawings() {
         if (debugDrawState.drawings.length) {
+            destroySceneRenderItems(debugDrawState.drawings);
             debugDrawState.stashedDrawings = debugDrawState.drawings;
             debugDrawState.drawings = [];
             stopDebugRedrawLoop();
@@ -2341,6 +2685,8 @@
     }
 
     function debugClearDrawings() {
+        destroySceneRenderItems(debugDrawState.drawings);
+        destroySceneRenderItems(debugDrawState.stashedDrawings);
         debugDrawState.drawings = [];
         debugDrawState.stashedDrawings = [];
         stopDebugRedrawLoop();
@@ -2362,6 +2708,15 @@
         if (args.panelVisible !== undefined || args.panel !== undefined) {
             debugDrawState.panelVisible = args.panelVisible !== undefined ? !!args.panelVisible : !!args.panel;
         }
+        if (args.depthTest !== undefined) {
+            debugDrawState.depthTest = !!args.depthTest;
+        }
+        if (args.alwaysTop !== undefined || args.alwaysOnTop !== undefined) {
+            debugDrawState.depthTest = !(args.alwaysTop !== undefined ? !!args.alwaysTop : !!args.alwaysOnTop);
+        }
+        if (args.sceneRender !== undefined || args.sceneRenderEnabled !== undefined) {
+            debugDrawState.sceneRenderEnabled = args.sceneRender !== undefined ? !!args.sceneRender : !!args.sceneRenderEnabled;
+        }
         ensureDebugCanvas();
         ensureDebugPanel();
         updateDebugPanel();
@@ -2373,6 +2728,9 @@
                 enabled: debugDrawState.enabled !== false,
                 showRays: debugDrawState.visibleRays !== false,
                 showColliders: debugDrawState.visibleColliders !== false,
+                sceneRender: debugDrawState.sceneRenderEnabled !== false,
+                depthTest: !!debugDrawState.depthTest,
+                alwaysOnTop: !debugDrawState.depthTest,
                 panelVisible: debugDrawState.panelVisible !== false,
                 totalDrawings: debugDrawState.drawings.length
             }
