@@ -1,7 +1,7 @@
 'use strict';
 
 (function () {
-    const VERSION = '0.1.22';
+    const VERSION = '0.1.26';
     const currentScript = document.currentScript;
     const scriptUrl = currentScript && currentScript.src ? currentScript.src : '';
     const baseUrl = scriptUrl ? scriptUrl.replace(/\/runtime\/bridge\.js(?:\?.*)?$/, '') : 'http://127.0.0.1:3300';
@@ -28,21 +28,27 @@
         enabled: true,
         visibleRays: true,
         visibleColliders: true,
+        hitCollidersOnly: false,
         sceneRenderEnabled: true,
         depthTest: false,
         panelVisible: true,
         panelX: 16,
-        panelY: 72
+        panelY: 72,
+        registeredRays: {}
     });
     debugDrawState.enabled = debugDrawState.enabled !== false;
     debugDrawState.visibleRays = debugDrawState.visibleRays !== false;
     debugDrawState.visibleColliders = debugDrawState.visibleColliders !== false;
+    debugDrawState.hitCollidersOnly = !!debugDrawState.hitCollidersOnly;
     debugDrawState.sceneRenderEnabled = debugDrawState.sceneRenderEnabled !== false;
     debugDrawState.depthTest = !!debugDrawState.depthTest;
     debugDrawState.panelVisible = debugDrawState.panelVisible !== false;
     debugDrawState.panelX = Number(debugDrawState.panelX) || 16;
     debugDrawState.panelY = Number(debugDrawState.panelY) || 72;
     debugDrawState.stashedDrawings = Array.isArray(debugDrawState.stashedDrawings) ? debugDrawState.stashedDrawings : [];
+    debugDrawState.registeredRays = debugDrawState.registeredRays && typeof debugDrawState.registeredRays === 'object'
+        ? debugDrawState.registeredRays
+        : {};
 
     function sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
@@ -1139,6 +1145,7 @@
         }
         const rays = panel.querySelector('[data-debug-toggle="rays"]');
         const colliders = panel.querySelector('[data-debug-toggle="colliders"]');
+        const hitOnly = panel.querySelector('[data-debug-toggle="hitOnly"]');
         const enabled = panel.querySelector('[data-debug-toggle="enabled"]');
         const alwaysTop = panel.querySelector('[data-debug-toggle="alwaysTop"]');
         const depthTest = panel.querySelector('[data-debug-toggle="depthTest"]');
@@ -1148,6 +1155,9 @@
         }
         if (colliders) {
             colliders.checked = debugDrawState.visibleColliders !== false;
+        }
+        if (hitOnly) {
+            hitOnly.checked = !!debugDrawState.hitCollidersOnly;
         }
         if (enabled) {
             enabled.checked = debugDrawState.enabled !== false;
@@ -1195,6 +1205,7 @@
             '<label style="display:flex;align-items:center;gap:6px;padding:8px 9px 0;"><input data-debug-toggle="enabled" type="checkbox">启用显示</label>',
             '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="rays" type="checkbox">显示射线</label>',
             '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="colliders" type="checkbox">显示碰撞体</label>',
+            '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="hitOnly" type="checkbox">只显示命中碰撞体</label>',
             '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="alwaysTop" type="checkbox">始终置顶显示</label>',
             '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 8px;"><input data-debug-toggle="depthTest" type="checkbox">深度遮挡显示</label>',
             '<button data-debug-clear="1" style="margin:0 9px 8px;padding:3px 8px;border:1px solid #40505a;background:#151f25;color:#e5faff;cursor:pointer;">清除绘制</button>'
@@ -1226,6 +1237,7 @@
         const enabled = panel.querySelector('[data-debug-toggle="enabled"]');
         const rays = panel.querySelector('[data-debug-toggle="rays"]');
         const colliders = panel.querySelector('[data-debug-toggle="colliders"]');
+        const hitOnly = panel.querySelector('[data-debug-toggle="hitOnly"]');
         const alwaysTop = panel.querySelector('[data-debug-toggle="alwaysTop"]');
         const depthTest = panel.querySelector('[data-debug-toggle="depthTest"]');
         if (enabled) {
@@ -1243,6 +1255,17 @@
         if (colliders) {
             colliders.addEventListener('change', () => {
                 debugDrawState.visibleColliders = !!colliders.checked;
+                redrawDebugDrawings();
+            });
+        }
+        if (hitOnly) {
+            hitOnly.addEventListener('change', () => {
+                debugDrawState.hitCollidersOnly = !!hitOnly.checked;
+                if (debugDrawState.hitCollidersOnly) {
+                    debugDrawState.visibleRays = true;
+                    debugDrawState.visibleColliders = true;
+                }
+                updateDebugPanel();
                 redrawDebugDrawings();
             });
         }
@@ -1472,6 +1495,47 @@
         }
     }
 
+    function colliderMatchesRayHit(colliderItem, hit) {
+        if (!colliderItem || !hit) {
+            return false;
+        }
+        const hitNodeRefs = [
+            hit.nodeUuid,
+            hit.nodePath,
+            hit.node
+        ].filter(Boolean).map(String);
+        const colliderNodeRefs = [
+            colliderItem.nodeRef,
+            colliderItem.node,
+            colliderItem.path
+        ].filter(Boolean).map(String);
+        const nodeMatched = hitNodeRefs.some((hitRef) => colliderNodeRefs.some((colliderRef) => {
+            return hitRef === colliderRef
+                || colliderRef.endsWith(`/${hitRef}`)
+                || hitRef.endsWith(`/${colliderRef}`);
+        }));
+        if (!nodeMatched) {
+            return false;
+        }
+        if (hit.colliderUuid && colliderItem.componentRef) {
+            return String(hit.colliderUuid) === String(colliderItem.componentRef);
+        }
+        if (hit.collider && colliderItem.componentType) {
+            return String(hit.collider) === String(colliderItem.componentType)
+                || String(colliderItem.componentType).endsWith(String(hit.collider));
+        }
+        return true;
+    }
+
+    function colliderHitByAnyRay(colliderItem) {
+        for (const item of debugDrawState.drawings || []) {
+            if (item && item.type === 'ray' && item.hit && colliderMatchesRayHit(colliderItem, item.hit)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function sceneItemVisible(item) {
         if (!item || debugDrawState.enabled === false) {
             return false;
@@ -1480,6 +1544,9 @@
             return false;
         }
         if (item.type === 'collider' && debugDrawState.visibleColliders === false) {
+            return false;
+        }
+        if (item.type === 'collider' && debugDrawState.hitCollidersOnly && !colliderHitByAnyRay(item)) {
             return false;
         }
         return true;
@@ -1649,7 +1716,15 @@
 
     function pruneDebugDrawings() {
         const now = Date.now();
-        debugDrawState.drawings = debugDrawState.drawings.filter((item) => !item.expiresAt || item.expiresAt > now);
+        const active = [];
+        for (const item of debugDrawState.drawings) {
+            if (item.expiresAt && item.expiresAt <= now) {
+                destroySceneRenderItem(item);
+                continue;
+            }
+            active.push(item);
+        }
+        debugDrawState.drawings = active;
     }
 
     function drawLine(ctx, a, b, color, thickness) {
@@ -1704,13 +1779,20 @@
         return true;
     }
 
-    function drawRayItem(ctx, item) {
+    function refreshLiveRayDrawing(item) {
         if (item.live && item.sourceArgs) {
             const resolved = resolveRayDrawing(item.sourceArgs);
             if (!resolved.success) {
-                return;
+                return false;
             }
             Object.assign(item, resolved.data);
+        }
+        return true;
+    }
+
+    function drawRayItem(ctx, item) {
+        if (!refreshLiveRayDrawing(item)) {
+            return;
         }
         const lineEnd = item.hit && item.hit.point ? item.hit.point : item.end;
         const lineColor = item.hit && item.hit.point ? (item.hitColor || '#ffcc00') : item.color;
@@ -1735,6 +1817,12 @@
             if (!updated) {
                 return;
             }
+        }
+        if (!sceneItemVisible(item)) {
+            if (item.sceneRender && item.sceneRender.node) {
+                item.sceneRender.node.active = false;
+            }
+            return;
         }
         const sceneSynced = syncSceneDebugDrawing(item);
         if (!sceneSynced) {
@@ -1762,6 +1850,11 @@
             return;
         }
         applyDebugVisibility();
+        for (const item of debugDrawState.drawings) {
+            if (item.type === 'ray' && item.live && item.sourceArgs) {
+                refreshLiveRayDrawing(item);
+            }
+        }
         for (const item of debugDrawState.drawings) {
             if (item.type === 'ray') {
                 if (debugDrawState.visibleRays === false) {
@@ -2288,10 +2381,23 @@
             || null);
     }
 
-    function rayHitNodeName(result) {
+    function rayHitNodeInfo(result) {
         const collider = result && (result.collider || result.shape || result.hitCollider);
         const node = collider && (collider.node || collider._node);
-        return getNodeName(node) || '';
+        const info = {
+            name: getNodeName(node) || '',
+            uuid: getNodeUuid(node) || '',
+            path: ''
+        };
+        if (node) {
+            try {
+                const found = collectNodes().find((item) => item.node === node);
+                info.path = found && found.path || info.name;
+            } catch (_) {
+                info.path = info.name;
+            }
+        }
+        return info;
     }
 
     function simplifyRaycastResult(result) {
@@ -2302,12 +2408,16 @@
         if (!point) {
             return null;
         }
+        const nodeInfo = rayHitNodeInfo(result);
         return {
             point,
             normal: vec3From(result.hitNormal || result.normal || result._hitNormal, null),
             distance: Number(result.distance || result.hitDistance || result._distance || 0) || 0,
-            node: rayHitNodeName(result),
-            collider: result.collider ? getComponentType(result.collider) : ''
+            node: nodeInfo.name,
+            nodeUuid: nodeInfo.uuid,
+            nodePath: nodeInfo.path,
+            collider: result.collider ? getComponentType(result.collider) : '',
+            colliderUuid: result.collider ? getComponentUuid(result.collider) : ''
         };
     }
 
@@ -2384,6 +2494,265 @@
         return addVec3(base, vec3From(offset, { x: 0, y: 0, z: 0 }));
     }
 
+    function normalizeDebugRayId(value) {
+        if (value && typeof value === 'object') {
+            value = value.id || value.name || value.uuid || value.tag;
+        }
+        return String(value || '').trim();
+    }
+
+    function sanitizeDebugRayMode(value) {
+        const mode = String(value || '').trim().toLowerCase();
+        return mode === 'persistent' || mode === 'track' || mode === '常驻' ? 'persistent' : 'event';
+    }
+
+    function getRegisteredRay(id) {
+        const key = normalizeDebugRayId(id);
+        return key ? debugDrawState.registeredRays[key] || null : null;
+    }
+
+    function summarizeRegisteredRay(ray) {
+        return {
+            id: ray.id,
+            name: ray.name,
+            description: ray.description,
+            mode: ray.mode,
+            tags: ray.tags,
+            watched: !!ray.watched,
+            visible: ray.visible !== false,
+            reportCount: ray.reportCount || 0,
+            lastReportedAt: ray.lastReportedAt || '',
+            lastDrawnAt: ray.lastDrawnAt || '',
+            hasSample: !!ray.sample,
+            sample: ray.sample ? {
+                origin: ray.sample.origin,
+                direction: ray.sample.direction,
+                target: ray.sample.target,
+                maxDistance: ray.sample.maxDistance,
+                hit: ray.sample.hit,
+                hitInfo: ray.sample.hitInfo
+            } : null
+        };
+    }
+
+    function registerDebugRay(definition) {
+        const id = normalizeDebugRayId(definition);
+        if (!id) {
+            return { success: false, error: '注册业务射线失败：缺少 id/name/uuid/tag。' };
+        }
+        const existing = debugDrawState.registeredRays[id] || {};
+        const ray = Object.assign(existing, {
+            id,
+            name: String(definition && (definition.name || definition.label) || existing.name || id),
+            description: String(definition && definition.description || existing.description || ''),
+            mode: sanitizeDebugRayMode(definition && definition.mode || existing.mode),
+            tags: Array.isArray(definition && definition.tags) ? definition.tags.map(String) : existing.tags || [],
+            defaultDuration: Number(definition && (definition.defaultDuration || definition.duration)) || existing.defaultDuration || 800,
+            color: parseColor(definition && definition.color, existing.color || '#ff3355'),
+            hitColor: parseColor(definition && definition.hitColor, existing.hitColor || '#ffcc00'),
+            thickness: Math.max(1, Number(definition && definition.thickness) || existing.thickness || 3),
+            showLabel: definition && definition.showLabel !== undefined ? !!definition.showLabel : existing.showLabel !== false,
+            hitCollidersOnly: definition && definition.hitCollidersOnly !== undefined ? !!definition.hitCollidersOnly : !!existing.hitCollidersOnly,
+            visible: definition && definition.visible !== undefined ? !!definition.visible : existing.visible !== false,
+            watched: !!existing.watched,
+            registeredAt: existing.registeredAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            reportCount: existing.reportCount || 0
+        });
+        debugDrawState.registeredRays[id] = ray;
+        return { success: true, message: `已注册业务射线：${ray.name || id}`, data: summarizeRegisteredRay(ray) };
+    }
+
+    function normalizeReportedHit(hit) {
+        if (!hit || typeof hit !== 'object') {
+            return null;
+        }
+        const collider = hit.collider || hit.hitCollider || hit.component || null;
+        const node = hit.node || hit.hitNode || collider && (collider.node || collider._node) || null;
+        const nodeName = typeof node === 'string' ? node : getNodeName(node);
+        const colliderName = typeof collider === 'string' ? collider : getComponentType(collider);
+        const point = vec3From(hit.point || hit.hitPoint || hit.worldPoint || hit.position || hit._hitPoint, null);
+        return {
+            point,
+            normal: vec3From(hit.normal || hit.hitNormal || hit._hitNormal, null),
+            distance: Number(hit.distance || hit.hitDistance || hit._distance || 0) || 0,
+            node: nodeName || hit.nodeName || '',
+            nodeUuid: hit.nodeUuid || hit.uuid || (node && typeof node !== 'string' ? getNodeUuid(node) : '') || '',
+            nodePath: hit.nodePath || hit.path || nodeName || '',
+            collider: colliderName || hit.colliderName || '',
+            colliderUuid: hit.colliderUuid || (collider && typeof collider !== 'string' ? getComponentUuid(collider) : '') || ''
+        };
+    }
+
+    function sampleToRayArgs(ray, sample) {
+        const origin = sample.origin || sample.from || sample.start;
+        const target = sample.target || sample.to || sample.end;
+        const direction = sample.direction || sample.dir;
+        const hit = normalizeReportedHit(sample.hit || sample.hitInfo && sample.hitInfo.result || sample.result);
+        return {
+            origin,
+            target,
+            direction,
+            maxDistance: sample.maxDistance || sample.distance,
+            raycast: sample.raycast === true ? true : false,
+            live: false,
+            color: sample.color || ray.color,
+            hitColor: sample.hitColor || ray.hitColor,
+            thickness: sample.thickness || ray.thickness,
+            showLabel: sample.showLabel !== undefined ? !!sample.showLabel : ray.showLabel !== false,
+            label: sample.label || `业务射线：${ray.name || ray.id}`,
+            hitLabel: sample.hitLabel || '命中：{node}',
+            reportedHit: hit,
+            registeredRayId: ray.id
+        };
+    }
+
+    function drawRegisteredRaySample(ray, sample) {
+        const args = sampleToRayArgs(ray, sample);
+        if (!args.origin || (!args.target && !args.direction)) {
+            return { success: false, error: `业务射线 ${ray.id} 上报缺少 origin + target/direction。` };
+        }
+        const resolved = resolveRayDrawing(args);
+        if (!resolved.success) {
+            return resolved;
+        }
+        const duration = ray.mode === 'persistent' ? 0 : Math.max(50, Number(sample.duration || ray.defaultDuration || 800));
+        const drawingData = Object.assign({
+            type: 'ray',
+            color: ray.color || '#ff3355',
+            live: false,
+            sourceArgs: null,
+            registeredRayId: ray.id
+        }, resolved.data);
+        if (ray.mode === 'persistent') {
+            let item = debugDrawState.drawings.find((entry) => entry.type === 'ray' && entry.registeredRayId === ray.id);
+            if (!item) {
+                item = addDebugDrawing(drawingData, Object.assign({}, args, { duration: 0 }));
+            } else {
+                Object.assign(item, drawingData, {
+                    color: parseColor(args.color, item.color),
+                    thickness: Math.max(1, Number(args.thickness) || item.thickness || 2),
+                    showLabel: args.showLabel !== false,
+                    expiresAt: 0
+                });
+                redrawDebugDrawings();
+            }
+            ray.drawingId = item.id;
+        } else {
+            debugDrawState.drawings = debugDrawState.drawings.filter((entry) => {
+                const matched = entry.type === 'ray' && entry.registeredRayId === ray.id;
+                if (matched) {
+                    destroySceneRenderItem(entry);
+                }
+                return !matched;
+            });
+            const item = addDebugDrawing(drawingData, Object.assign({}, args, { duration }));
+            ray.drawingId = item.id;
+        }
+        ray.lastDrawnAt = new Date().toISOString();
+        if (ray.hitCollidersOnly) {
+            debugDrawState.hitCollidersOnly = true;
+            debugDrawState.visibleRays = true;
+            debugDrawState.visibleColliders = true;
+            updateDebugPanel();
+        }
+        return { success: true, data: summarizeRegisteredRay(ray) };
+    }
+
+    function reportDebugRay(idOrSample, maybeSample) {
+        const id = normalizeDebugRayId(maybeSample ? idOrSample : idOrSample && (idOrSample.id || idOrSample.name || idOrSample.uuid || idOrSample.tag));
+        const sample = maybeSample || idOrSample || {};
+        if (!id) {
+            return { success: false, error: '上报业务射线失败：缺少 id/name/uuid/tag。' };
+        }
+        let ray = getRegisteredRay(id);
+        if (!ray) {
+            registerDebugRay({ id, name: id, mode: sample.mode || 'event' });
+            ray = getRegisteredRay(id);
+        }
+        ray.sample = Object.assign({}, sample);
+        ray.reportCount = (ray.reportCount || 0) + 1;
+        ray.lastReportedAt = new Date().toISOString();
+        if (ray.watched && ray.visible !== false) {
+            const drawResult = drawRegisteredRaySample(ray, sample);
+            if (!drawResult.success) {
+                return drawResult;
+            }
+        }
+        return { success: true, message: `已上报业务射线：${ray.name || id}`, data: summarizeRegisteredRay(ray) };
+    }
+
+    function listRegisteredRays(args) {
+        const query = String(args && (args.query || args.id || args.name || '') || '').trim().toLowerCase();
+        const rays = Object.values(debugDrawState.registeredRays || {}).filter((ray) => {
+            if (!query) {
+                return true;
+            }
+            return [ray.id, ray.name, ray.description, ...(ray.tags || [])].some((value) => String(value || '').toLowerCase().includes(query));
+        }).map(summarizeRegisteredRay);
+        return { success: true, data: { total: rays.length, rays } };
+    }
+
+    function watchRegisteredRay(args) {
+        const id = normalizeDebugRayId(args && (args.id || args.rayId || args.name || args.query));
+        const ray = getRegisteredRay(id);
+        if (!ray) {
+            return { success: false, error: `未找到已注册业务射线：${id || ''}` };
+        }
+        ray.watched = true;
+        ray.visible = true;
+        if (args && args.hitCollidersOnly !== undefined) {
+            ray.hitCollidersOnly = !!args.hitCollidersOnly;
+        }
+        if (ray.sample) {
+            const drawResult = drawRegisteredRaySample(ray, ray.sample);
+            if (!drawResult.success) {
+                return drawResult;
+            }
+        }
+        return { success: true, message: `已开始监听业务射线：${ray.name || ray.id}`, data: summarizeRegisteredRay(ray) };
+    }
+
+    function unwatchRegisteredRay(args) {
+        const id = normalizeDebugRayId(args && (args.id || args.rayId || args.name || args.query));
+        const ray = getRegisteredRay(id);
+        if (!ray) {
+            return { success: false, error: `未找到已注册业务射线：${id || ''}` };
+        }
+        ray.watched = false;
+        debugDrawState.drawings = debugDrawState.drawings.filter((item) => {
+            const matched = item.registeredRayId === ray.id;
+            if (matched) {
+                destroySceneRenderItem(item);
+            }
+            return !matched;
+        });
+        redrawDebugDrawings();
+        return { success: true, message: `已停止监听业务射线：${ray.name || ray.id}`, data: summarizeRegisteredRay(ray) };
+    }
+
+    function clearRegisteredRays(args) {
+        const clearDefinitions = args && args.clearDefinitions === true;
+        const ids = new Set(Object.keys(debugDrawState.registeredRays || {}));
+        debugDrawState.drawings = debugDrawState.drawings.filter((item) => {
+            const matched = item.registeredRayId && ids.has(item.registeredRayId);
+            if (matched) {
+                destroySceneRenderItem(item);
+            }
+            return !matched;
+        });
+        if (clearDefinitions) {
+            debugDrawState.registeredRays = {};
+        } else {
+            for (const ray of Object.values(debugDrawState.registeredRays || {})) {
+                ray.watched = false;
+                ray.drawingId = 0;
+            }
+        }
+        redrawDebugDrawings();
+        return { success: true, message: clearDefinitions ? '已清空业务射线注册池。' : '已停止所有业务射线监听。', data: listRegisteredRays({}).data };
+    }
+
     function debugDrawRay(args) {
         const resolved = resolveRayDrawing(args);
         if (!resolved.success) {
@@ -2432,7 +2801,10 @@
         const maxDistance = Math.max(0.01, Number(args.maxDistance || args.distance) || (target ? distanceVec3(origin, target) : 10));
         const end = addVec3(origin, scaleVec3(direction, maxDistance));
         const raycast = args.raycast !== false;
-        const hitInfo = raycast ? physicsRaycastClosest(origin, direction, maxDistance, args) : { supported: false, hit: false };
+        const reportedHit = args.reportedHit && args.reportedHit.point ? args.reportedHit : null;
+        const hitInfo = reportedHit
+            ? { supported: true, hit: true, result: reportedHit, source: 'reported' }
+            : raycast ? physicsRaycastClosest(origin, direction, maxDistance, args) : { supported: false, hit: false };
         const hit = hitInfo && hitInfo.hit && hitInfo.result ? hitInfo.result : null;
         const badLabel = (value) => /^[?\uFFFD\s]+$/.test(String(value || ''));
         const genericHitLabel = (value) => {
@@ -2705,6 +3077,17 @@
         if (args.showColliders !== undefined || args.colliders !== undefined) {
             debugDrawState.visibleColliders = args.showColliders !== undefined ? !!args.showColliders : !!args.colliders;
         }
+        if (args.hitCollidersOnly !== undefined || args.onlyHitColliders !== undefined || args.hitOnly !== undefined) {
+            debugDrawState.hitCollidersOnly = args.hitCollidersOnly !== undefined
+                ? !!args.hitCollidersOnly
+                : args.onlyHitColliders !== undefined
+                    ? !!args.onlyHitColliders
+                    : !!args.hitOnly;
+            if (debugDrawState.hitCollidersOnly) {
+                debugDrawState.visibleRays = true;
+                debugDrawState.visibleColliders = true;
+            }
+        }
         if (args.panelVisible !== undefined || args.panel !== undefined) {
             debugDrawState.panelVisible = args.panelVisible !== undefined ? !!args.panelVisible : !!args.panel;
         }
@@ -2728,6 +3111,7 @@
                 enabled: debugDrawState.enabled !== false,
                 showRays: debugDrawState.visibleRays !== false,
                 showColliders: debugDrawState.visibleColliders !== false,
+                hitCollidersOnly: !!debugDrawState.hitCollidersOnly,
                 sceneRender: debugDrawState.sceneRenderEnabled !== false,
                 depthTest: !!debugDrawState.depthTest,
                 alwaysOnTop: !debugDrawState.depthTest,
@@ -3856,6 +4240,18 @@
                 return debugClearDrawings(args);
             case 'debug_set_visibility':
                 return debugSetVisibility(args);
+            case 'register_runtime_ray':
+                return registerDebugRay(args);
+            case 'report_runtime_ray':
+                return reportDebugRay(args);
+            case 'list_runtime_rays':
+                return listRegisteredRays(args);
+            case 'watch_runtime_ray':
+                return watchRegisteredRay(args);
+            case 'unwatch_runtime_ray':
+                return unwatchRegisteredRay(args);
+            case 'clear_runtime_rays':
+                return clearRegisteredRays(args);
             case 'analyze_frame':
             case 'capture_frame':
                 return analyzeFrame(args);
@@ -4019,6 +4415,23 @@
         },
         captureFrame: function (options) {
             return execute({ action: 'capture_frame', args: options || {} });
+        },
+        registerDebugRay: function (definition) {
+            return registerDebugRay(definition || {});
+        },
+        reportDebugRay: function (idOrSample, sample) {
+            return reportDebugRay(idOrSample, sample);
+        },
+        listDebugRays: function (options) {
+            return listRegisteredRays(options || {});
+        },
+        watchDebugRay: function (idOrOptions) {
+            const args = typeof idOrOptions === 'string' ? { id: idOrOptions } : idOrOptions || {};
+            return watchRegisteredRay(args);
+        },
+        unwatchDebugRay: function (idOrOptions) {
+            const args = typeof idOrOptions === 'string' ? { id: idOrOptions } : idOrOptions || {};
+            return unwatchRegisteredRay(args);
         }
     };
 

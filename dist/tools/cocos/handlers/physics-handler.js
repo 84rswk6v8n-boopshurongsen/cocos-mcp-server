@@ -29,7 +29,13 @@ const ACTIONS = [
     'debug_draw_all_colliders',
     'debug_add_collider',
     'debug_clear_drawings',
-    'debug_set_visibility'
+    'debug_set_visibility',
+    'register_runtime_ray',
+    'report_runtime_ray',
+    'list_runtime_rays',
+    'watch_runtime_ray',
+    'unwatch_runtime_ray',
+    'clear_runtime_rays'
 ];
 
 const RIGIDBODY_3D = 'cc.RigidBody';
@@ -360,7 +366,8 @@ class PhysicsHandler {
                 '使用 debug_draw_* 可视化调试前，先通过 cocos_runtime.open_injected_preview 打开系统外部浏览器自动注入预览页；不要使用 Codex 内部浏览器查看调试绘制。',
                 '射线调试优先使用 debug_draw_ray，并传 originNode + targetNode；移动节点传 live:true，工具会每帧重新采样射线、命中点和命中节点。',
                 'debug_draw_ray 默认执行 raycast 命中检测，返回 hitInfo.result.node/collider/point/distance，并在画面中显示“命中：节点名”。建议同时调用 debug_draw_all_colliders 显示碰撞体线框。',
-                'Actions: info, list, add_rigidbody, add_collider, set_rigidbody, set_collider, setup_trigger_zone, setup_projectile_collision, validate_physics, list_collision_groups, set_collision_group, set_collision_mask, inspect_physics_settings, set_physics_debug, validate_physics_scene, create_physics_material, assign_physics_material, inspect_physics_material, debug_draw_ray, debug_draw_collider, debug_draw_all_colliders, debug_add_collider, debug_clear_drawings, debug_set_visibility.'
+                '业务射线接入：游戏代码通过 window.__cocosMcpRuntimeBridge.registerDebugRay/reportDebugRay 注册和上报，MCP 用 watch_runtime_ray 监听并复用现有调试绘制出口。',
+                'Actions: info, list, add_rigidbody, add_collider, set_rigidbody, set_collider, setup_trigger_zone, setup_projectile_collision, validate_physics, list_collision_groups, set_collision_group, set_collision_mask, inspect_physics_settings, set_physics_debug, validate_physics_scene, create_physics_material, assign_physics_material, inspect_physics_material, debug_draw_ray, debug_draw_collider, debug_draw_all_colliders, debug_add_collider, debug_clear_drawings, debug_set_visibility, register_runtime_ray, report_runtime_ray, list_runtime_rays, watch_runtime_ray, unwatch_runtime_ray, clear_runtime_rays.'
             ].join('\n'),
             inputSchema: {
                 type: 'object',
@@ -373,6 +380,40 @@ class PhysicsHandler {
                     node: {
                         type: 'string',
                         description: '节点名称、路径或 UUID'
+                    },
+                    id: {
+                        type: 'string',
+                        description: 'register_runtime_ray/watch_runtime_ray/unwatch_runtime_ray 的业务射线唯一 ID'
+                    },
+                    rayId: {
+                        type: 'string',
+                        description: '业务射线 ID，id 的别名'
+                    },
+                    description: {
+                        type: 'string',
+                        description: 'register_runtime_ray 业务射线说明'
+                    },
+                    mode: {
+                        type: 'string',
+                        enum: ['event', 'persistent'],
+                        description: 'register_runtime_ray 业务射线模式：event 一次性事件射线，persistent 常驻追踪射线'
+                    },
+                    tags: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'register_runtime_ray 业务射线标签，方便 Codex 搜索，例如 player/weapon/vision'
+                    },
+                    defaultDuration: {
+                        type: 'number',
+                        description: 'register_runtime_ray 事件型射线每次上报后的默认显示时长，毫秒'
+                    },
+                    query: {
+                        type: 'string',
+                        description: 'list_runtime_rays/watch_runtime_ray 可用的搜索关键词或业务射线 ID'
+                    },
+                    hit: {
+                        type: 'object',
+                        description: 'report_runtime_ray 上报的命中信息，可包含 point/node/nodeUuid/nodePath/collider/colliderUuid/distance'
                     },
                     rootNode: {
                         type: 'string',
@@ -507,6 +548,10 @@ class PhysicsHandler {
                         type: 'boolean',
                         description: 'debug_set_visibility 是否显示碰撞体'
                     },
+                    hitCollidersOnly: {
+                        type: 'boolean',
+                        description: 'debug_set_visibility 是否只显示射线当前命中的碰撞体；开启后会自动显示射线和碰撞体'
+                    },
                     panelVisible: {
                         type: 'boolean',
                         description: 'debug_set_visibility 是否显示可拖动调试面板'
@@ -630,6 +675,12 @@ class PhysicsHandler {
             case 'debug_add_collider':
             case 'debug_clear_drawings':
             case 'debug_set_visibility':
+            case 'register_runtime_ray':
+            case 'report_runtime_ray':
+            case 'list_runtime_rays':
+            case 'watch_runtime_ray':
+            case 'unwatch_runtime_ray':
+            case 'clear_runtime_rays':
                 return await this.executeRuntimeDebug(args.action, args);
             default:
                 return fail(`未知物理操作：${args.action || '(empty)'}`);

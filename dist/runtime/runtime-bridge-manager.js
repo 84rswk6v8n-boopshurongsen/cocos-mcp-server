@@ -17,7 +17,7 @@ class RuntimeBridgeManager {
         this.commandTimeoutMs = 10000;
         this.staleClientMs = 60000;
         this.port = Number(settings.port) || 3300;
-        this.minimumBridgeVersion = '0.1.22';
+        this.minimumBridgeVersion = '0.1.26';
         this.activeClientId = null;
     }
 
