@@ -1,7 +1,7 @@
 'use strict';
 
 (function () {
-    const VERSION = '0.1.26';
+    const VERSION = '0.1.27';
     const currentScript = document.currentScript;
     const scriptUrl = currentScript && currentScript.src ? currentScript.src : '';
     const baseUrl = scriptUrl ? scriptUrl.replace(/\/runtime\/bridge\.js(?:\?.*)?$/, '') : 'http://127.0.0.1:3300';
@@ -27,6 +27,7 @@
         raf: 0,
         enabled: true,
         visibleRays: true,
+        visibleAreas: true,
         visibleColliders: true,
         hitCollidersOnly: false,
         sceneRenderEnabled: true,
@@ -34,10 +35,12 @@
         panelVisible: true,
         panelX: 16,
         panelY: 72,
-        registeredRays: {}
+        registeredRays: {},
+        registeredAreas: {}
     });
     debugDrawState.enabled = debugDrawState.enabled !== false;
     debugDrawState.visibleRays = debugDrawState.visibleRays !== false;
+    debugDrawState.visibleAreas = debugDrawState.visibleAreas !== false;
     debugDrawState.visibleColliders = debugDrawState.visibleColliders !== false;
     debugDrawState.hitCollidersOnly = !!debugDrawState.hitCollidersOnly;
     debugDrawState.sceneRenderEnabled = debugDrawState.sceneRenderEnabled !== false;
@@ -48,6 +51,9 @@
     debugDrawState.stashedDrawings = Array.isArray(debugDrawState.stashedDrawings) ? debugDrawState.stashedDrawings : [];
     debugDrawState.registeredRays = debugDrawState.registeredRays && typeof debugDrawState.registeredRays === 'object'
         ? debugDrawState.registeredRays
+        : {};
+    debugDrawState.registeredAreas = debugDrawState.registeredAreas && typeof debugDrawState.registeredAreas === 'object'
+        ? debugDrawState.registeredAreas
         : {};
 
     function sleep(ms) {
@@ -1144,6 +1150,7 @@
             return;
         }
         const rays = panel.querySelector('[data-debug-toggle="rays"]');
+        const areas = panel.querySelector('[data-debug-toggle="areas"]');
         const colliders = panel.querySelector('[data-debug-toggle="colliders"]');
         const hitOnly = panel.querySelector('[data-debug-toggle="hitOnly"]');
         const enabled = panel.querySelector('[data-debug-toggle="enabled"]');
@@ -1152,6 +1159,9 @@
         const clear = panel.querySelector('[data-debug-clear="1"]');
         if (rays) {
             rays.checked = debugDrawState.visibleRays !== false;
+        }
+        if (areas) {
+            areas.checked = debugDrawState.visibleAreas !== false;
         }
         if (colliders) {
             colliders.checked = debugDrawState.visibleColliders !== false;
@@ -1204,6 +1214,7 @@
             '<div data-debug-drag="1" style="cursor:move;padding:7px 9px;background:rgba(0,229,255,0.16);font-weight:600;user-select:none;">MCP 物理调试</div>',
             '<label style="display:flex;align-items:center;gap:6px;padding:8px 9px 0;"><input data-debug-toggle="enabled" type="checkbox">启用显示</label>',
             '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="rays" type="checkbox">显示射线</label>',
+            '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="areas" type="checkbox">显示区域</label>',
             '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="colliders" type="checkbox">显示碰撞体</label>',
             '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="hitOnly" type="checkbox">只显示命中碰撞体</label>',
             '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="alwaysTop" type="checkbox">始终置顶显示</label>',
@@ -1236,6 +1247,7 @@
         }
         const enabled = panel.querySelector('[data-debug-toggle="enabled"]');
         const rays = panel.querySelector('[data-debug-toggle="rays"]');
+        const areas = panel.querySelector('[data-debug-toggle="areas"]');
         const colliders = panel.querySelector('[data-debug-toggle="colliders"]');
         const hitOnly = panel.querySelector('[data-debug-toggle="hitOnly"]');
         const alwaysTop = panel.querySelector('[data-debug-toggle="alwaysTop"]');
@@ -1249,6 +1261,12 @@
         if (rays) {
             rays.addEventListener('change', () => {
                 debugDrawState.visibleRays = !!rays.checked;
+                redrawDebugDrawings();
+            });
+        }
+        if (areas) {
+            areas.addEventListener('change', () => {
+                debugDrawState.visibleAreas = !!areas.checked;
                 redrawDebugDrawings();
             });
         }
@@ -1543,6 +1561,9 @@
         if (item.type === 'ray' && debugDrawState.visibleRays === false) {
             return false;
         }
+        if (item.type === 'area' && debugDrawState.visibleAreas === false) {
+            return false;
+        }
         if (item.type === 'collider' && debugDrawState.visibleColliders === false) {
             return false;
         }
@@ -1574,6 +1595,9 @@
             return edges;
         }
         if (item.type === 'collider') {
+            return item.edges || [];
+        }
+        if (item.type === 'area') {
             return item.edges || [];
         }
         return [];
@@ -1835,6 +1859,30 @@
         }
     }
 
+    function drawAreaItem(ctx, item) {
+        if (item.live) {
+            const updated = refreshLiveAreaDrawing(item);
+            if (!updated) {
+                return;
+            }
+        }
+        if (!sceneItemVisible(item)) {
+            if (item.sceneRender && item.sceneRender.node) {
+                item.sceneRender.node.active = false;
+            }
+            return;
+        }
+        const sceneSynced = syncSceneDebugDrawing(item);
+        if (!sceneSynced) {
+            for (const edge of item.edges || []) {
+                drawLine(ctx, edge[0], edge[1], item.color, item.thickness);
+            }
+        }
+        if (item.showLabel) {
+            drawLabel(ctx, item.label || item.name || 'area', item.labelWorld || item.center || (item.edges && item.edges[0] && item.edges[0][0]), item.color);
+        }
+    }
+
     function redrawDebugDrawings() {
         ensureDebugCanvas();
         pruneDebugDrawings();
@@ -1853,6 +1901,9 @@
         for (const item of debugDrawState.drawings) {
             if (item.type === 'ray' && item.live && item.sourceArgs) {
                 refreshLiveRayDrawing(item);
+            }
+            else if (item.type === 'area' && item.live && item.sourceArgs) {
+                refreshLiveAreaDrawing(item);
             }
         }
         for (const item of debugDrawState.drawings) {
@@ -1873,6 +1924,15 @@
                     continue;
                 }
                 drawColliderItem(ctx, item);
+            }
+            else if (item.type === 'area') {
+                if (debugDrawState.visibleAreas === false) {
+                    if (item.sceneRender && item.sceneRender.node) {
+                        item.sceneRender.node.active = false;
+                    }
+                    continue;
+                }
+                drawAreaItem(ctx, item);
             }
         }
     }
@@ -2109,6 +2169,441 @@
             }
         }
         return edges;
+    }
+
+    function buildCylinderEdges(node, center, radius, height, direction) {
+        center = vec3From(center);
+        radius = Math.max(0.01, Number(radius) || 0.5);
+        height = Math.max(0.01, Number(height) || 1);
+        const axis = axisInfo(direction);
+        const half = height / 2;
+        const segments = 32;
+        const edges = [];
+        const makePoint = (main, a, b) => {
+            const local = { x: center.x, y: center.y, z: center.z };
+            local[axis.main] += main;
+            local[axis.a] += a;
+            local[axis.b] += b;
+            return transformLocalPoint(node, local);
+        };
+        const top = [];
+        const bottom = [];
+        for (let i = 0; i < segments; i++) {
+            const angle = Math.PI * 2 * i / segments;
+            const a = Math.cos(angle) * radius;
+            const b = Math.sin(angle) * radius;
+            top.push(makePoint(half, a, b));
+            bottom.push(makePoint(-half, a, b));
+        }
+        for (let i = 0; i < segments; i++) {
+            const next = (i + 1) % segments;
+            edges.push([top[i], top[next]]);
+            edges.push([bottom[i], bottom[next]]);
+            if (i % 8 === 0) {
+                edges.push([top[i], bottom[i]]);
+            }
+        }
+        return edges;
+    }
+
+    function buildConeEdges(node, center, radius, height, direction) {
+        center = vec3From(center);
+        radius = Math.max(0.01, Number(radius) || 0.5);
+        height = Math.max(0.01, Number(height) || 1);
+        const axis = axisInfo(direction);
+        const half = height / 2;
+        const segments = 32;
+        const edges = [];
+        const makePoint = (main, a, b) => {
+            const local = { x: center.x, y: center.y, z: center.z };
+            local[axis.main] += main;
+            local[axis.a] += a;
+            local[axis.b] += b;
+            return transformLocalPoint(node, local);
+        };
+        const apex = makePoint(half, 0, 0);
+        const ring = [];
+        for (let i = 0; i < segments; i++) {
+            const angle = Math.PI * 2 * i / segments;
+            ring.push(makePoint(-half, Math.cos(angle) * radius, Math.sin(angle) * radius));
+        }
+        for (let i = 0; i < ring.length; i++) {
+            edges.push([ring[i], ring[(i + 1) % ring.length]]);
+            if (i % 8 === 0) {
+                edges.push([apex, ring[i]]);
+            }
+        }
+        return edges;
+    }
+
+    function buildSectorEdges(node, center, radius, angleDegrees, directionVector) {
+        center = vec3From(center);
+        radius = Math.max(0.01, Number(radius) || 2);
+        const angle = Math.max(1, Math.min(360, Number(angleDegrees) || 90)) * Math.PI / 180;
+        const segments = Math.max(4, Math.ceil(angle / (Math.PI / 18)));
+        const dir = normalizeVec3(vec3From(directionVector, { x: 0, y: 0, z: 1 }));
+        const baseAngle = Math.atan2(dir.z, dir.x);
+        const start = baseAngle - angle / 2;
+        const origin = transformLocalPoint(node, center);
+        const arc = [];
+        for (let i = 0; i <= segments; i++) {
+            const a = start + angle * i / segments;
+            arc.push(transformLocalPoint(node, {
+                x: center.x + Math.cos(a) * radius,
+                y: center.y,
+                z: center.z + Math.sin(a) * radius
+            }));
+        }
+        const edges = [];
+        edges.push([origin, arc[0]]);
+        for (let i = 0; i + 1 < arc.length; i++) {
+            edges.push([arc[i], arc[i + 1]]);
+        }
+        edges.push([origin, arc[arc.length - 1]]);
+        return edges;
+    }
+
+    function normalizeDebugAreaId(value) {
+        if (value && typeof value === 'object') {
+            value = value.id || value.areaId || value.name || value.uuid || value.tag;
+        }
+        return String(value || '').trim();
+    }
+
+    function sanitizeDebugAreaMode(value) {
+        const mode = String(value || '').trim().toLowerCase();
+        return mode === 'persistent' || mode === 'track' || mode === '常驻' ? 'persistent' : 'event';
+    }
+
+    function sanitizeAreaShape(value) {
+        const shape = String(value || '').trim().toLowerCase();
+        if (['sphere', 'ball', '圆', '球'].includes(shape)) {
+            return 'sphere';
+        }
+        if (['capsule', '胶囊'].includes(shape)) {
+            return 'capsule';
+        }
+        if (['cylinder', '圆柱'].includes(shape)) {
+            return 'cylinder';
+        }
+        if (['cone', '锥形', '圆锥'].includes(shape)) {
+            return 'cone';
+        }
+        if (['sector', 'fan', '扇形', '视野'].includes(shape)) {
+            return 'sector';
+        }
+        return 'box';
+    }
+
+    function areaNodeFromArgs(args) {
+        const ref = args && (args.node || args.centerNode || args.originNode || args.ownerNode || args.followNode || args.targetNode);
+        return ref ? findNode(ref) : null;
+    }
+
+    function resolveAreaCenter(found, args) {
+        const localCenter = vec3From(args && (args.center || args.offset), { x: 0, y: 0, z: 0 });
+        if (found && found.node) {
+            return {
+                local: localCenter,
+                world: transformLocalPoint(found.node, localCenter)
+            };
+        }
+        const world = vec3From(args && (args.position || args.worldCenter || args.center), { x: 0, y: 0, z: 0 });
+        return {
+            local: world,
+            world
+        };
+    }
+
+    function resolveAreaDrawing(args) {
+        args = args || {};
+        const found = areaNodeFromArgs(args);
+        if ((args.node || args.centerNode || args.followNode) && !found) {
+            return { success: false, error: `未找到区域跟随节点：${args.node || args.centerNode || args.followNode}` };
+        }
+        const shape = sanitizeAreaShape(args.shape || args.areaType || args.type);
+        const center = resolveAreaCenter(found, args);
+        const node = found && found.node || null;
+        const direction = args.direction !== undefined ? args.direction : 1;
+        let edges = [];
+        if (shape === 'sphere') {
+            edges = buildSphereEdges(node, center.local, args.radius || 1);
+        }
+        else if (shape === 'capsule') {
+            edges = buildCapsuleEdges(node, center.local, args.radius || 0.5, args.height || args.cylinderHeight || 1, direction);
+        }
+        else if (shape === 'cylinder') {
+            edges = buildCylinderEdges(node, center.local, args.radius || 1, args.height || 1, direction);
+        }
+        else if (shape === 'cone') {
+            edges = buildConeEdges(node, center.local, args.radius || args.range || 1, args.height || args.range || 2, direction);
+        }
+        else if (shape === 'sector') {
+            edges = buildSectorEdges(node, center.local, args.radius || args.range || 2, args.angle || args.angleDegrees || 90, args.forward || args.directionVector || args.dir);
+        }
+        else {
+            edges = buildBoxEdges(node, center.local, args.size || { x: 1, y: 1, z: 1 });
+        }
+        if (!edges || !edges.length) {
+            return { success: false, error: `区域形状 ${shape} 没有生成可绘制线框。` };
+        }
+        return {
+            success: true,
+            data: {
+                type: 'area',
+                shape,
+                node: found && found.path || '',
+                nodeRef: found && (getNodeUuid(found.node) || found.path) || '',
+                center: center.world,
+                labelWorld: center.world,
+                label: args.label || args.name || `区域：${shape}`,
+                color: parseColor(args.color, '#66ff66'),
+                edges
+            }
+        };
+    }
+
+    function debugDrawArea(args) {
+        const resolved = resolveAreaDrawing(args);
+        if (!resolved.success) {
+            return resolved;
+        }
+        const item = addDebugDrawing(Object.assign({
+            type: 'area',
+            live: !!args.live,
+            sourceArgs: args.live ? Object.assign({}, args) : null
+        }, resolved.data), args);
+        return {
+            success: true,
+            message: args.live ? '已绘制实时运行态检测区域。' : '已绘制运行态检测区域。',
+            data: {
+                id: item.id,
+                shape: item.shape,
+                node: item.node,
+                center: item.center,
+                live: !!item.live,
+                totalDrawings: debugDrawState.drawings.length
+            }
+        };
+    }
+
+    function refreshLiveAreaDrawing(item) {
+        const resolved = resolveAreaDrawing(item.sourceArgs || item);
+        if (!resolved.success) {
+            return false;
+        }
+        Object.assign(item, resolved.data, {
+            id: item.id,
+            createdAt: item.createdAt,
+            expiresAt: item.expiresAt,
+            thickness: item.thickness,
+            showLabel: item.showLabel,
+            live: item.live,
+            sourceArgs: item.sourceArgs,
+            registeredAreaId: item.registeredAreaId
+        });
+        return true;
+    }
+
+    function getRegisteredArea(id) {
+        const key = normalizeDebugAreaId(id);
+        return key ? debugDrawState.registeredAreas[key] || null : null;
+    }
+
+    function summarizeRegisteredArea(area) {
+        return {
+            id: area.id,
+            name: area.name,
+            description: area.description,
+            mode: area.mode,
+            shape: area.shape,
+            tags: area.tags,
+            watched: !!area.watched,
+            visible: area.visible !== false,
+            reportCount: area.reportCount || 0,
+            lastReportedAt: area.lastReportedAt || '',
+            lastDrawnAt: area.lastDrawnAt || '',
+            hasSample: !!area.sample,
+            sample: area.sample ? {
+                shape: area.sample.shape || area.shape,
+                node: area.sample.node || area.sample.centerNode || '',
+                center: area.sample.center || area.sample.position || null,
+                radius: area.sample.radius,
+                size: area.sample.size,
+                angle: area.sample.angle || area.sample.angleDegrees,
+                hits: area.sample.hits || area.sample.targets || []
+            } : null
+        };
+    }
+
+    function registerDebugArea(definition) {
+        const id = normalizeDebugAreaId(definition);
+        if (!id) {
+            return { success: false, error: '注册业务检测区域失败：缺少 id/name/uuid/tag。' };
+        }
+        const existing = debugDrawState.registeredAreas[id] || {};
+        const area = Object.assign(existing, {
+            id,
+            name: String(definition && (definition.name || definition.label) || existing.name || id),
+            description: String(definition && definition.description || existing.description || ''),
+            mode: sanitizeDebugAreaMode(definition && definition.mode || existing.mode),
+            shape: sanitizeAreaShape(definition && (definition.shape || definition.areaType || definition.type) || existing.shape),
+            tags: Array.isArray(definition && definition.tags) ? definition.tags.map(String) : existing.tags || [],
+            defaultDuration: Number(definition && (definition.defaultDuration || definition.duration)) || existing.defaultDuration || 800,
+            color: parseColor(definition && definition.color, existing.color || '#66ff66'),
+            thickness: Math.max(1, Number(definition && definition.thickness) || existing.thickness || 2),
+            showLabel: definition && definition.showLabel !== undefined ? !!definition.showLabel : existing.showLabel !== false,
+            visible: definition && definition.visible !== undefined ? !!definition.visible : existing.visible !== false,
+            watched: !!existing.watched,
+            registeredAt: existing.registeredAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            reportCount: existing.reportCount || 0
+        });
+        debugDrawState.registeredAreas[id] = area;
+        return { success: true, message: `已注册业务检测区域：${area.name || id}`, data: summarizeRegisteredArea(area) };
+    }
+
+    function sampleToAreaArgs(area, sample) {
+        return Object.assign({}, sample || {}, {
+            shape: sample && (sample.shape || sample.areaType || sample.type) || area.shape,
+            color: sample && sample.color || area.color,
+            thickness: sample && sample.thickness || area.thickness,
+            showLabel: sample && sample.showLabel !== undefined ? !!sample.showLabel : area.showLabel !== false,
+            label: sample && sample.label || `业务区域：${area.name || area.id}`
+        });
+    }
+
+    function drawRegisteredAreaSample(area, sample) {
+        const args = sampleToAreaArgs(area, sample);
+        const resolved = resolveAreaDrawing(args);
+        if (!resolved.success) {
+            return resolved;
+        }
+        const duration = area.mode === 'persistent' ? 0 : Math.max(50, Number(sample && sample.duration || area.defaultDuration || 800));
+        const drawingData = Object.assign({
+            type: 'area',
+            live: false,
+            sourceArgs: null,
+            registeredAreaId: area.id
+        }, resolved.data);
+        if (area.mode === 'persistent') {
+            let item = debugDrawState.drawings.find((entry) => entry.type === 'area' && entry.registeredAreaId === area.id);
+            if (!item) {
+                item = addDebugDrawing(drawingData, Object.assign({}, args, { duration: 0 }));
+            } else {
+                Object.assign(item, drawingData, {
+                    color: parseColor(args.color, item.color),
+                    thickness: Math.max(1, Number(args.thickness) || item.thickness || 2),
+                    showLabel: args.showLabel !== false,
+                    expiresAt: 0
+                });
+                redrawDebugDrawings();
+            }
+            area.drawingId = item.id;
+        } else {
+            debugDrawState.drawings = debugDrawState.drawings.filter((entry) => {
+                const matched = entry.type === 'area' && entry.registeredAreaId === area.id;
+                if (matched) {
+                    destroySceneRenderItem(entry);
+                }
+                return !matched;
+            });
+            const item = addDebugDrawing(drawingData, Object.assign({}, args, { duration }));
+            area.drawingId = item.id;
+        }
+        area.lastDrawnAt = new Date().toISOString();
+        return { success: true, data: summarizeRegisteredArea(area) };
+    }
+
+    function reportDebugArea(idOrSample, maybeSample) {
+        const id = normalizeDebugAreaId(maybeSample ? idOrSample : idOrSample && (idOrSample.id || idOrSample.areaId || idOrSample.name || idOrSample.uuid || idOrSample.tag));
+        const sample = maybeSample || idOrSample || {};
+        if (!id) {
+            return { success: false, error: '上报业务检测区域失败：缺少 id/name/uuid/tag。' };
+        }
+        let area = getRegisteredArea(id);
+        if (!area) {
+            registerDebugArea({ id, name: id, mode: sample.mode || 'event', shape: sample.shape || sample.areaType || sample.type || 'box' });
+            area = getRegisteredArea(id);
+        }
+        area.sample = Object.assign({}, sample);
+        area.reportCount = (area.reportCount || 0) + 1;
+        area.lastReportedAt = new Date().toISOString();
+        if (area.watched && area.visible !== false) {
+            const drawResult = drawRegisteredAreaSample(area, sample);
+            if (!drawResult.success) {
+                return drawResult;
+            }
+        }
+        return { success: true, message: `已上报业务检测区域：${area.name || id}`, data: summarizeRegisteredArea(area) };
+    }
+
+    function listRegisteredAreas(args) {
+        const query = String(args && (args.query || args.id || args.name || '') || '').trim().toLowerCase();
+        const areas = Object.values(debugDrawState.registeredAreas || {}).filter((area) => {
+            if (!query) {
+                return true;
+            }
+            return [area.id, area.name, area.description, area.shape, ...(area.tags || [])].some((value) => String(value || '').toLowerCase().includes(query));
+        }).map(summarizeRegisteredArea);
+        return { success: true, data: { total: areas.length, areas } };
+    }
+
+    function watchRegisteredArea(args) {
+        const id = normalizeDebugAreaId(args && (args.id || args.areaId || args.name || args.query));
+        const area = getRegisteredArea(id);
+        if (!area) {
+            return { success: false, error: `未找到已注册业务检测区域：${id || ''}` };
+        }
+        area.watched = true;
+        area.visible = true;
+        if (area.sample) {
+            const drawResult = drawRegisteredAreaSample(area, area.sample);
+            if (!drawResult.success) {
+                return drawResult;
+            }
+        }
+        return { success: true, message: `已开始监听业务检测区域：${area.name || area.id}`, data: summarizeRegisteredArea(area) };
+    }
+
+    function unwatchRegisteredArea(args) {
+        const id = normalizeDebugAreaId(args && (args.id || args.areaId || args.name || args.query));
+        const area = getRegisteredArea(id);
+        if (!area) {
+            return { success: false, error: `未找到已注册业务检测区域：${id || ''}` };
+        }
+        area.watched = false;
+        debugDrawState.drawings = debugDrawState.drawings.filter((item) => {
+            const matched = item.registeredAreaId === area.id;
+            if (matched) {
+                destroySceneRenderItem(item);
+            }
+            return !matched;
+        });
+        redrawDebugDrawings();
+        return { success: true, message: `已停止监听业务检测区域：${area.name || area.id}`, data: summarizeRegisteredArea(area) };
+    }
+
+    function clearRegisteredAreas(args) {
+        const clearDefinitions = args && args.clearDefinitions === true;
+        const ids = new Set(Object.keys(debugDrawState.registeredAreas || {}));
+        debugDrawState.drawings = debugDrawState.drawings.filter((item) => {
+            const matched = item.registeredAreaId && ids.has(item.registeredAreaId);
+            if (matched) {
+                destroySceneRenderItem(item);
+            }
+            return !matched;
+        });
+        if (clearDefinitions) {
+            debugDrawState.registeredAreas = {};
+        } else {
+            for (const area of Object.values(debugDrawState.registeredAreas || {})) {
+                area.watched = false;
+                area.drawingId = 0;
+            }
+        }
+        redrawDebugDrawings();
+        return { success: true, message: clearDefinitions ? '已清空业务检测区域注册池。' : '已停止所有业务检测区域监听。', data: listRegisteredAreas({}).data };
     }
 
     function readMeshFromCollider(component, node) {
@@ -3074,6 +3569,9 @@
         if (args.showRays !== undefined || args.rays !== undefined) {
             debugDrawState.visibleRays = args.showRays !== undefined ? !!args.showRays : !!args.rays;
         }
+        if (args.showAreas !== undefined || args.areas !== undefined) {
+            debugDrawState.visibleAreas = args.showAreas !== undefined ? !!args.showAreas : !!args.areas;
+        }
         if (args.showColliders !== undefined || args.colliders !== undefined) {
             debugDrawState.visibleColliders = args.showColliders !== undefined ? !!args.showColliders : !!args.colliders;
         }
@@ -3110,6 +3608,7 @@
             data: {
                 enabled: debugDrawState.enabled !== false,
                 showRays: debugDrawState.visibleRays !== false,
+                showAreas: debugDrawState.visibleAreas !== false,
                 showColliders: debugDrawState.visibleColliders !== false,
                 hitCollidersOnly: !!debugDrawState.hitCollidersOnly,
                 sceneRender: debugDrawState.sceneRenderEnabled !== false,
@@ -4230,6 +4729,8 @@
                 return setNodeTransform(args);
             case 'debug_draw_ray':
                 return debugDrawRay(args);
+            case 'debug_draw_area':
+                return debugDrawArea(args);
             case 'debug_draw_collider':
                 return debugDrawCollider(args);
             case 'debug_draw_all_colliders':
@@ -4252,6 +4753,18 @@
                 return unwatchRegisteredRay(args);
             case 'clear_runtime_rays':
                 return clearRegisteredRays(args);
+            case 'register_runtime_area':
+                return registerDebugArea(args);
+            case 'report_runtime_area':
+                return reportDebugArea(args);
+            case 'list_runtime_areas':
+                return listRegisteredAreas(args);
+            case 'watch_runtime_area':
+                return watchRegisteredArea(args);
+            case 'unwatch_runtime_area':
+                return unwatchRegisteredArea(args);
+            case 'clear_runtime_areas':
+                return clearRegisteredAreas(args);
             case 'analyze_frame':
             case 'capture_frame':
                 return analyzeFrame(args);
@@ -4432,6 +4945,23 @@
         unwatchDebugRay: function (idOrOptions) {
             const args = typeof idOrOptions === 'string' ? { id: idOrOptions } : idOrOptions || {};
             return unwatchRegisteredRay(args);
+        },
+        registerDebugArea: function (definition) {
+            return registerDebugArea(definition || {});
+        },
+        reportDebugArea: function (idOrSample, sample) {
+            return reportDebugArea(idOrSample, sample);
+        },
+        listDebugAreas: function (options) {
+            return listRegisteredAreas(options || {});
+        },
+        watchDebugArea: function (idOrOptions) {
+            const args = typeof idOrOptions === 'string' ? { id: idOrOptions } : idOrOptions || {};
+            return watchRegisteredArea(args);
+        },
+        unwatchDebugArea: function (idOrOptions) {
+            const args = typeof idOrOptions === 'string' ? { id: idOrOptions } : idOrOptions || {};
+            return unwatchRegisteredArea(args);
         }
     };
 

@@ -35,7 +35,14 @@ const ACTIONS = [
     'list_runtime_rays',
     'watch_runtime_ray',
     'unwatch_runtime_ray',
-    'clear_runtime_rays'
+    'clear_runtime_rays',
+    'debug_draw_area',
+    'register_runtime_area',
+    'report_runtime_area',
+    'list_runtime_areas',
+    'watch_runtime_area',
+    'unwatch_runtime_area',
+    'clear_runtime_areas'
 ];
 
 const RIGIDBODY_3D = 'cc.RigidBody';
@@ -367,7 +374,8 @@ class PhysicsHandler {
                 '射线调试优先使用 debug_draw_ray，并传 originNode + targetNode；移动节点传 live:true，工具会每帧重新采样射线、命中点和命中节点。',
                 'debug_draw_ray 默认执行 raycast 命中检测，返回 hitInfo.result.node/collider/point/distance，并在画面中显示“命中：节点名”。建议同时调用 debug_draw_all_colliders 显示碰撞体线框。',
                 '业务射线接入：游戏代码通过 window.__cocosMcpRuntimeBridge.registerDebugRay/reportDebugRay 注册和上报，MCP 用 watch_runtime_ray 监听并复用现有调试绘制出口。',
-                'Actions: info, list, add_rigidbody, add_collider, set_rigidbody, set_collider, setup_trigger_zone, setup_projectile_collision, validate_physics, list_collision_groups, set_collision_group, set_collision_mask, inspect_physics_settings, set_physics_debug, validate_physics_scene, create_physics_material, assign_physics_material, inspect_physics_material, debug_draw_ray, debug_draw_collider, debug_draw_all_colliders, debug_add_collider, debug_clear_drawings, debug_set_visibility, register_runtime_ray, report_runtime_ray, list_runtime_rays, watch_runtime_ray, unwatch_runtime_ray, clear_runtime_rays.'
+                'Runtime area debug is independent from ray debug: use debug_draw_area for temporary ranges and register_runtime_area/report_runtime_area/watch_runtime_area for business attack ranges, vision ranges, and trigger zones.',
+                'Actions: info, list, add_rigidbody, add_collider, set_rigidbody, set_collider, setup_trigger_zone, setup_projectile_collision, validate_physics, list_collision_groups, set_collision_group, set_collision_mask, inspect_physics_settings, set_physics_debug, validate_physics_scene, create_physics_material, assign_physics_material, inspect_physics_material, debug_draw_ray, debug_draw_area, debug_draw_collider, debug_draw_all_colliders, debug_add_collider, debug_clear_drawings, debug_set_visibility, register_runtime_ray, report_runtime_ray, list_runtime_rays, watch_runtime_ray, unwatch_runtime_ray, clear_runtime_rays, register_runtime_area, report_runtime_area, list_runtime_areas, watch_runtime_area, unwatch_runtime_area, clear_runtime_areas.'
             ].join('\n'),
             inputSchema: {
                 type: 'object',
@@ -414,6 +422,40 @@ class PhysicsHandler {
                     hit: {
                         type: 'object',
                         description: 'report_runtime_ray 上报的命中信息，可包含 point/node/nodeUuid/nodePath/collider/colliderUuid/distance'
+                    },
+                    areaId: {
+                        type: 'string',
+                        description: '业务检测区域 ID，id 的别名'
+                    },
+                    shape: {
+                        type: 'string',
+                        enum: ['box', 'sphere', 'capsule', 'cylinder', 'cone', 'sector'],
+                        description: 'debug_draw_area/register_runtime_area/report_runtime_area 的区域形状'
+                    },
+                    areaType: {
+                        type: 'string',
+                        enum: ['box', 'sphere', 'capsule', 'cylinder', 'cone', 'sector'],
+                        description: '区域形状别名，等同 shape'
+                    },
+                    angle: {
+                        type: 'number',
+                        description: 'sector 扇形区域角度，单位度'
+                    },
+                    angleDegrees: {
+                        type: 'number',
+                        description: 'sector 扇形区域角度别名，单位度'
+                    },
+                    forward: {
+                        type: 'object',
+                        description: 'sector 扇形区域朝向 {x,y,z}'
+                    },
+                    centerNode: {
+                        type: 'string',
+                        description: 'debug_draw_area 区域跟随节点'
+                    },
+                    followNode: {
+                        type: 'string',
+                        description: 'debug_draw_area 区域跟随节点别名'
                     },
                     rootNode: {
                         type: 'string',
@@ -544,6 +586,10 @@ class PhysicsHandler {
                         type: 'boolean',
                         description: 'debug_set_visibility 是否显示射线'
                     },
+                    showAreas: {
+                        type: 'boolean',
+                        description: 'debug_set_visibility 是否显示检测区域'
+                    },
                     showColliders: {
                         type: 'boolean',
                         description: 'debug_set_visibility 是否显示碰撞体'
@@ -670,6 +716,7 @@ class PhysicsHandler {
             case 'inspect_physics_material':
                 return await this.inspectPhysicsMaterial(args);
             case 'debug_draw_ray':
+            case 'debug_draw_area':
             case 'debug_draw_collider':
             case 'debug_draw_all_colliders':
             case 'debug_add_collider':
@@ -681,6 +728,12 @@ class PhysicsHandler {
             case 'watch_runtime_ray':
             case 'unwatch_runtime_ray':
             case 'clear_runtime_rays':
+            case 'register_runtime_area':
+            case 'report_runtime_area':
+            case 'list_runtime_areas':
+            case 'watch_runtime_area':
+            case 'unwatch_runtime_area':
+            case 'clear_runtime_areas':
                 return await this.executeRuntimeDebug(args.action, args);
             default:
                 return fail(`未知物理操作：${args.action || '(empty)'}`);
