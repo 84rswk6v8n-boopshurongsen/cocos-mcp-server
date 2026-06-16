@@ -598,6 +598,10 @@ class PhysicsHandler {
                         type: 'boolean',
                         description: 'debug_set_visibility 是否只显示射线当前命中的碰撞体；开启后会自动显示射线和碰撞体'
                     },
+                    areaHitCollidersOnly: {
+                        type: 'boolean',
+                        description: 'debug_set_visibility 是否只显示检测区域当前命中的碰撞体；开启后会自动显示区域和碰撞体'
+                    },
                     panelVisible: {
                         type: 'boolean',
                         description: 'debug_set_visibility 是否显示可拖动调试面板'

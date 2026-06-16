@@ -1,7 +1,7 @@
 'use strict';
 
 (function () {
-    const VERSION = '0.1.27';
+    const VERSION = '0.1.33';
     const currentScript = document.currentScript;
     const scriptUrl = currentScript && currentScript.src ? currentScript.src : '';
     const baseUrl = scriptUrl ? scriptUrl.replace(/\/runtime\/bridge\.js(?:\?.*)?$/, '') : 'http://127.0.0.1:3300';
@@ -30,6 +30,7 @@
         visibleAreas: true,
         visibleColliders: true,
         hitCollidersOnly: false,
+        areaHitCollidersOnly: false,
         sceneRenderEnabled: true,
         depthTest: false,
         panelVisible: true,
@@ -43,6 +44,7 @@
     debugDrawState.visibleAreas = debugDrawState.visibleAreas !== false;
     debugDrawState.visibleColliders = debugDrawState.visibleColliders !== false;
     debugDrawState.hitCollidersOnly = !!debugDrawState.hitCollidersOnly;
+    debugDrawState.areaHitCollidersOnly = !!debugDrawState.areaHitCollidersOnly;
     debugDrawState.sceneRenderEnabled = debugDrawState.sceneRenderEnabled !== false;
     debugDrawState.depthTest = !!debugDrawState.depthTest;
     debugDrawState.panelVisible = debugDrawState.panelVisible !== false;
@@ -1140,7 +1142,7 @@
             debugDrawState.panel.style.display = debugDrawState.panelVisible ? 'block' : 'none';
         }
         if (debugDrawState.sceneRoot && debugDrawState.sceneRoot.isValid) {
-            debugDrawState.sceneRoot.active = debugDrawState.enabled !== false && debugDrawState.sceneRenderEnabled !== false && !!debugDrawState.depthTest;
+            debugDrawState.sceneRoot.active = debugDrawState.enabled !== false && debugDrawState.sceneRenderEnabled !== false;
         }
     }
 
@@ -1153,6 +1155,7 @@
         const areas = panel.querySelector('[data-debug-toggle="areas"]');
         const colliders = panel.querySelector('[data-debug-toggle="colliders"]');
         const hitOnly = panel.querySelector('[data-debug-toggle="hitOnly"]');
+        const areaHitOnly = panel.querySelector('[data-debug-toggle="areaHitOnly"]');
         const enabled = panel.querySelector('[data-debug-toggle="enabled"]');
         const alwaysTop = panel.querySelector('[data-debug-toggle="alwaysTop"]');
         const depthTest = panel.querySelector('[data-debug-toggle="depthTest"]');
@@ -1168,6 +1171,9 @@
         }
         if (hitOnly) {
             hitOnly.checked = !!debugDrawState.hitCollidersOnly;
+        }
+        if (areaHitOnly) {
+            areaHitOnly.checked = !!debugDrawState.areaHitCollidersOnly;
         }
         if (enabled) {
             enabled.checked = debugDrawState.enabled !== false;
@@ -1202,7 +1208,7 @@
         panel.style.left = `${debugDrawState.panelX}px`;
         panel.style.top = `${debugDrawState.panelY}px`;
         panel.style.zIndex = '2147483647';
-        panel.style.minWidth = '168px';
+        panel.style.minWidth = '188px';
         panel.style.padding = '0';
         panel.style.border = '1px solid rgba(0,229,255,0.75)';
         panel.style.background = 'rgba(10,14,18,0.88)';
@@ -1210,15 +1216,21 @@
         panel.style.font = '12px sans-serif';
         panel.style.boxShadow = '0 6px 18px rgba(0,0,0,0.35)';
         panel.style.pointerEvents = 'auto';
+        const sectionTitleStyle = 'padding:8px 9px 2px;color:#7eefff;font-weight:600;border-top:1px solid rgba(126,239,255,0.16);margin-top:6px;';
+        const labelStyle = 'display:flex;align-items:center;gap:6px;padding:6px 9px 0;';
         panel.innerHTML = [
             '<div data-debug-drag="1" style="cursor:move;padding:7px 9px;background:rgba(0,229,255,0.16);font-weight:600;user-select:none;">MCP 物理调试</div>',
-            '<label style="display:flex;align-items:center;gap:6px;padding:8px 9px 0;"><input data-debug-toggle="enabled" type="checkbox">启用显示</label>',
-            '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="rays" type="checkbox">显示射线</label>',
-            '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="areas" type="checkbox">显示区域</label>',
-            '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="colliders" type="checkbox">显示碰撞体</label>',
-            '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="hitOnly" type="checkbox">只显示命中碰撞体</label>',
-            '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 0;"><input data-debug-toggle="alwaysTop" type="checkbox">始终置顶显示</label>',
-            '<label style="display:flex;align-items:center;gap:6px;padding:6px 9px 8px;"><input data-debug-toggle="depthTest" type="checkbox">深度遮挡显示</label>',
+            '<div style="padding:8px 9px 2px;color:#7eefff;font-weight:600;">公共显示</div>',
+            `<label style="${labelStyle}"><input data-debug-toggle="enabled" type="checkbox">启用显示</label>`,
+            `<label style="${labelStyle}"><input data-debug-toggle="colliders" type="checkbox">显示碰撞体</label>`,
+            `<label style="${labelStyle}"><input data-debug-toggle="alwaysTop" type="checkbox">始终置顶显示</label>`,
+            `<label style="${labelStyle}padding-bottom:4px;"><input data-debug-toggle="depthTest" type="checkbox">深度遮挡显示</label>`,
+            `<div style="${sectionTitleStyle}">射线调试</div>`,
+            `<label style="${labelStyle}"><input data-debug-toggle="rays" type="checkbox">显示射线</label>`,
+            `<label style="${labelStyle}padding-bottom:4px;"><input data-debug-toggle="hitOnly" type="checkbox">只显示射线命中碰撞体</label>`,
+            `<div style="${sectionTitleStyle}">区域检测调试</div>`,
+            `<label style="${labelStyle}"><input data-debug-toggle="areas" type="checkbox">显示检测区域</label>`,
+            `<label style="${labelStyle}padding-bottom:8px;"><input data-debug-toggle="areaHitOnly" type="checkbox">只显示区域命中碰撞体</label>`,
             '<button data-debug-clear="1" style="margin:0 9px 8px;padding:3px 8px;border:1px solid #40505a;background:#151f25;color:#e5faff;cursor:pointer;">清除绘制</button>'
         ].join('');
         document.documentElement.appendChild(panel);
@@ -1250,6 +1262,7 @@
         const areas = panel.querySelector('[data-debug-toggle="areas"]');
         const colliders = panel.querySelector('[data-debug-toggle="colliders"]');
         const hitOnly = panel.querySelector('[data-debug-toggle="hitOnly"]');
+        const areaHitOnly = panel.querySelector('[data-debug-toggle="areaHitOnly"]');
         const alwaysTop = panel.querySelector('[data-debug-toggle="alwaysTop"]');
         const depthTest = panel.querySelector('[data-debug-toggle="depthTest"]');
         if (enabled) {
@@ -1281,6 +1294,17 @@
                 debugDrawState.hitCollidersOnly = !!hitOnly.checked;
                 if (debugDrawState.hitCollidersOnly) {
                     debugDrawState.visibleRays = true;
+                    debugDrawState.visibleColliders = true;
+                }
+                updateDebugPanel();
+                redrawDebugDrawings();
+            });
+        }
+        if (areaHitOnly) {
+            areaHitOnly.addEventListener('change', () => {
+                debugDrawState.areaHitCollidersOnly = !!areaHitOnly.checked;
+                if (debugDrawState.areaHitCollidersOnly) {
+                    debugDrawState.visibleAreas = true;
                     debugDrawState.visibleColliders = true;
                 }
                 updateDebugPanel();
@@ -1454,7 +1478,7 @@
             }
         }
         debugDrawState.sceneRoot = root;
-        root.active = debugDrawState.enabled !== false && debugDrawState.sceneRenderEnabled !== false && !!debugDrawState.depthTest;
+        root.active = debugDrawState.enabled !== false && debugDrawState.sceneRenderEnabled !== false;
         return root;
     }
 
@@ -1554,6 +1578,118 @@
         return false;
     }
 
+    function boundsFromEdges(edges) {
+        const points = [];
+        for (const edge of edges || []) {
+            if (edge && edge[0]) {
+                points.push(edge[0]);
+            }
+            if (edge && edge[1]) {
+                points.push(edge[1]);
+            }
+        }
+        if (!points.length) {
+            return null;
+        }
+        const bounds = {
+            min: { x: Infinity, y: Infinity, z: Infinity },
+            max: { x: -Infinity, y: -Infinity, z: -Infinity }
+        };
+        for (const raw of points) {
+            const point = vec3From(raw, null);
+            if (!point) {
+                continue;
+            }
+            bounds.min.x = Math.min(bounds.min.x, point.x);
+            bounds.min.y = Math.min(bounds.min.y, point.y);
+            bounds.min.z = Math.min(bounds.min.z, point.z);
+            bounds.max.x = Math.max(bounds.max.x, point.x);
+            bounds.max.y = Math.max(bounds.max.y, point.y);
+            bounds.max.z = Math.max(bounds.max.z, point.z);
+        }
+        if (!Number.isFinite(bounds.min.x) || !Number.isFinite(bounds.max.x)) {
+            return null;
+        }
+        return bounds;
+    }
+
+    function itemBounds(item) {
+        if (!item) {
+            return null;
+        }
+        if (!item.bounds) {
+            item.bounds = boundsFromEdges(item.edges || []);
+        }
+        return item.bounds;
+    }
+
+    function boundsOverlap(a, b) {
+        if (!a || !b) {
+            return false;
+        }
+        return a.min.x <= b.max.x && a.max.x >= b.min.x
+            && a.min.y <= b.max.y && a.max.y >= b.min.y
+            && a.min.z <= b.max.z && a.max.z >= b.min.z;
+    }
+
+    function clampPointToBounds(point, bounds) {
+        point = vec3From(point, { x: 0, y: 0, z: 0 });
+        if (!bounds) {
+            return point;
+        }
+        return {
+            x: Math.max(bounds.min.x, Math.min(bounds.max.x, point.x)),
+            y: Math.max(bounds.min.y, Math.min(bounds.max.y, point.y)),
+            z: Math.max(bounds.min.z, Math.min(bounds.max.z, point.z))
+        };
+    }
+
+    function colliderHitByAnyArea(colliderItem) {
+        for (const item of debugDrawState.drawings || []) {
+            if (!item || item.type !== 'area' || !Array.isArray(item.hits)) {
+                continue;
+            }
+            if (item.hits.some((hit) => hit && hit.colliderDrawingId === colliderItem.id)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function updateSingleAreaColliderHits(area) {
+        if (!area || area.type !== 'area') {
+            return;
+        }
+        const colliders = (debugDrawState.drawings || []).filter((item) => item && item.type === 'collider');
+        const areaBounds = itemBounds(area);
+        const hits = [];
+        for (const collider of colliders) {
+            const colliderBounds = itemBounds(collider);
+            if (!boundsOverlap(areaBounds, colliderBounds)) {
+                continue;
+            }
+            const point = clampPointToBounds(collider.center || collider.labelWorld, areaBounds);
+            hits.push({
+                point,
+                node: collider.node || '',
+                nodeRef: collider.nodeRef || '',
+                collider: collider.componentType || '',
+                colliderRef: collider.componentRef || '',
+                colliderDrawingId: collider.id,
+                label: `检测到：${collider.node || collider.componentType || '碰撞体'}`
+            });
+        }
+        area.hits = hits;
+        area.hitCount = hits.length;
+    }
+
+    function updateAreaColliderHits() {
+        const areas = (debugDrawState.drawings || []).filter((item) => item && item.type === 'area');
+        for (const area of areas) {
+            updateSingleAreaColliderHits(area);
+        }
+    }
+
     function sceneItemVisible(item) {
         if (!item || debugDrawState.enabled === false) {
             return false;
@@ -1568,6 +1704,9 @@
             return false;
         }
         if (item.type === 'collider' && debugDrawState.hitCollidersOnly && !colliderHitByAnyRay(item)) {
+            return false;
+        }
+        if (item.type === 'collider' && debugDrawState.areaHitCollidersOnly && !colliderHitByAnyArea(item)) {
             return false;
         }
         return true;
@@ -1598,7 +1737,13 @@
             return item.edges || [];
         }
         if (item.type === 'area') {
-            return item.edges || [];
+            const edges = Array.isArray(item.edges) ? item.edges.slice() : [];
+            for (const hit of item.hits || []) {
+                if (hit && hit.point) {
+                    edges.push(...markerEdges(hit.point, item.hitWorldSize || 0.18));
+                }
+            }
+            return edges;
         }
         return [];
     }
@@ -1661,7 +1806,7 @@
     }
 
     function syncSceneDebugDrawing(item) {
-        if (debugDrawState.sceneRenderEnabled === false || !debugDrawState.depthTest) {
+        if (debugDrawState.sceneRenderEnabled === false) {
             destroySceneRenderItem(item);
             return false;
         }
@@ -1866,6 +2011,7 @@
                 return;
             }
         }
+        updateSingleAreaColliderHits(item);
         if (!sceneItemVisible(item)) {
             if (item.sceneRender && item.sceneRender.node) {
                 item.sceneRender.node.active = false;
@@ -1880,6 +2026,17 @@
         }
         if (item.showLabel) {
             drawLabel(ctx, item.label || item.name || 'area', item.labelWorld || item.center || (item.edges && item.edges[0] && item.edges[0][0]), item.color);
+        }
+        for (const hit of item.hits || []) {
+            if (!hit || !hit.point) {
+                continue;
+            }
+            if (!sceneSynced) {
+                drawMarker(ctx, hit.point, item.hitColor || '#ffcc00', item.hitSize || 8);
+            }
+            if (item.showLabel) {
+                drawLabel(ctx, hit.label || '检测到碰撞体', hit.point, item.hitColor || '#ffcc00');
+            }
         }
     }
 
@@ -1905,7 +2062,11 @@
             else if (item.type === 'area' && item.live && item.sourceArgs) {
                 refreshLiveAreaDrawing(item);
             }
+            else if (item.type === 'collider' && item.live && item.sourceArgs) {
+                refreshLiveColliderDrawing(item);
+            }
         }
+        updateAreaColliderHits();
         for (const item of debugDrawState.drawings) {
             if (item.type === 'ray') {
                 if (debugDrawState.visibleRays === false) {
@@ -2358,6 +2519,11 @@
                 labelWorld: center.world,
                 label: args.label || args.name || `区域：${shape}`,
                 color: parseColor(args.color, '#66ff66'),
+                hitColor: parseColor(args.hitColor, '#ffcc00'),
+                hitSize: Number(args.hitSize) || 8,
+                hits: [],
+                hitCount: 0,
+                bounds: boundsFromEdges(edges),
                 edges
             }
         };
@@ -2381,6 +2547,8 @@
                 shape: item.shape,
                 node: item.node,
                 center: item.center,
+                hitCount: item.hitCount || 0,
+                hits: item.hits || [],
                 live: !!item.live,
                 totalDrawings: debugDrawState.drawings.length
             }
@@ -2411,6 +2579,9 @@
     }
 
     function summarizeRegisteredArea(area) {
+        const drawing = area && area.drawingId
+            ? (debugDrawState.drawings || []).find((item) => item && item.id === area.drawingId)
+            : null;
         return {
             id: area.id,
             name: area.name,
@@ -2423,6 +2594,11 @@
             reportCount: area.reportCount || 0,
             lastReportedAt: area.lastReportedAt || '',
             lastDrawnAt: area.lastDrawnAt || '',
+            drawingId: area.drawingId || 0,
+            currentHitCount: drawing ? drawing.hitCount || 0 : 0,
+            currentHits: drawing ? drawing.hits || [] : [],
+            hasDefinition: !!area.definitionSample,
+            definition: area.definitionSample ? Object.assign({}, area.definitionSample) : null,
             hasSample: !!area.sample,
             sample: area.sample ? {
                 shape: area.sample.shape || area.shape,
@@ -2436,12 +2612,69 @@
         };
     }
 
+    function cloneAreaValue(value) {
+        if (value === undefined) {
+            return undefined;
+        }
+        if (value === null || typeof value !== 'object') {
+            return value;
+        }
+        if (Array.isArray(value)) {
+            return value.map(cloneAreaValue);
+        }
+        return Object.assign({}, value);
+    }
+
+    function buildAreaDefinitionSample(definition, existingSample) {
+        const sample = Object.assign({}, existingSample || {});
+        const keys = [
+            'node',
+            'centerNode',
+            'followNode',
+            'originNode',
+            'ownerNode',
+            'targetNode',
+            'shape',
+            'areaType',
+            'type',
+            'center',
+            'offset',
+            'position',
+            'worldCenter',
+            'size',
+            'radius',
+            'height',
+            'cylinderHeight',
+            'range',
+            'angle',
+            'angleDegrees',
+            'forward',
+            'direction',
+            'directionVector',
+            'dir',
+            'color',
+            'hitColor',
+            'thickness',
+            'showLabel',
+            'label',
+            'hitSize',
+            'live'
+        ];
+        for (const key of keys) {
+            if (definition && definition[key] !== undefined) {
+                sample[key] = cloneAreaValue(definition[key]);
+            }
+        }
+        return Object.keys(sample).length ? sample : null;
+    }
+
     function registerDebugArea(definition) {
         const id = normalizeDebugAreaId(definition);
         if (!id) {
             return { success: false, error: '注册业务检测区域失败：缺少 id/name/uuid/tag。' };
         }
         const existing = debugDrawState.registeredAreas[id] || {};
+        const definitionSample = buildAreaDefinitionSample(definition || {}, existing.definitionSample);
         const area = Object.assign(existing, {
             id,
             name: String(definition && (definition.name || definition.label) || existing.name || id),
@@ -2457,18 +2690,20 @@
             watched: !!existing.watched,
             registeredAt: existing.registeredAt || new Date().toISOString(),
             updatedAt: new Date().toISOString(),
-            reportCount: existing.reportCount || 0
+            reportCount: existing.reportCount || 0,
+            definitionSample
         });
         debugDrawState.registeredAreas[id] = area;
         return { success: true, message: `已注册业务检测区域：${area.name || id}`, data: summarizeRegisteredArea(area) };
     }
 
     function sampleToAreaArgs(area, sample) {
-        return Object.assign({}, sample || {}, {
-            shape: sample && (sample.shape || sample.areaType || sample.type) || area.shape,
-            color: sample && sample.color || area.color,
-            thickness: sample && sample.thickness || area.thickness,
-            showLabel: sample && sample.showLabel !== undefined ? !!sample.showLabel : area.showLabel !== false,
+        const merged = Object.assign({}, area.definitionSample || {}, sample || {});
+        return Object.assign(merged, {
+            shape: merged.shape || merged.areaType || merged.type || area.shape,
+            color: merged.color || area.color,
+            thickness: merged.thickness || area.thickness,
+            showLabel: merged.showLabel !== undefined ? !!merged.showLabel : area.showLabel !== false,
             label: sample && sample.label || `业务区域：${area.name || area.id}`
         });
     }
@@ -2557,8 +2792,9 @@
         }
         area.watched = true;
         area.visible = true;
-        if (area.sample) {
-            const drawResult = drawRegisteredAreaSample(area, area.sample);
+        const sample = area.sample || area.definitionSample;
+        if (sample) {
+            const drawResult = drawRegisteredAreaSample(area, sample);
             if (!drawResult.success) {
                 return drawResult;
             }
@@ -2812,6 +3048,7 @@
             labelWorld: worldCenter,
             label: args && args.showLabel === false ? '' : `${item.path} ${type.split('.').pop()}`,
             color: isTrigger ? '#ffcc00' : '#00e5ff',
+            bounds: boundsFromEdges(edges),
             edges
         };
     }
@@ -3575,6 +3812,17 @@
         if (args.showColliders !== undefined || args.colliders !== undefined) {
             debugDrawState.visibleColliders = args.showColliders !== undefined ? !!args.showColliders : !!args.colliders;
         }
+        if (args.areaHitCollidersOnly !== undefined || args.onlyAreaHitColliders !== undefined || args.areaHitOnly !== undefined) {
+            debugDrawState.areaHitCollidersOnly = args.areaHitCollidersOnly !== undefined
+                ? !!args.areaHitCollidersOnly
+                : args.onlyAreaHitColliders !== undefined
+                    ? !!args.onlyAreaHitColliders
+                    : !!args.areaHitOnly;
+            if (debugDrawState.areaHitCollidersOnly) {
+                debugDrawState.visibleAreas = true;
+                debugDrawState.visibleColliders = true;
+            }
+        }
         if (args.hitCollidersOnly !== undefined || args.onlyHitColliders !== undefined || args.hitOnly !== undefined) {
             debugDrawState.hitCollidersOnly = args.hitCollidersOnly !== undefined
                 ? !!args.hitCollidersOnly
@@ -3611,6 +3859,7 @@
                 showAreas: debugDrawState.visibleAreas !== false,
                 showColliders: debugDrawState.visibleColliders !== false,
                 hitCollidersOnly: !!debugDrawState.hitCollidersOnly,
+                areaHitCollidersOnly: !!debugDrawState.areaHitCollidersOnly,
                 sceneRender: debugDrawState.sceneRenderEnabled !== false,
                 depthTest: !!debugDrawState.depthTest,
                 alwaysOnTop: !debugDrawState.depthTest,
