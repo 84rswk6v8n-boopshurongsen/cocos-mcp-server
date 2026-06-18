@@ -18,6 +18,7 @@ const { SpineHandler } = require('./handlers/spine-handler');
 const { FontHandler } = require('./handlers/font-handler');
 const { PhysicsHandler } = require('./handlers/physics-handler');
 const { MaterialHandler } = require('./handlers/material-handler');
+const { VfxHandler } = require('./handlers/vfx-handler');
 const { MessageRecorder } = require('./utils/message-recorder');
 const { getExtendedToolDefinitions, executeExtendedTool } = require('./extended-tools-registry');
 
@@ -49,7 +50,8 @@ function createCoreHandlers() {
         spine: new SpineHandler(),
         label: new FontHandler(),
         physics: new PhysicsHandler(),
-        material: new MaterialHandler()
+        material: new MaterialHandler(),
+        vfx: new VfxHandler()
     };
 }
 
@@ -64,6 +66,69 @@ function upsertToolDefinitions(tools, definitions) {
         }
     }
     return tools;
+}
+
+function loadFreshToolGuides() {
+    const guidePath = require.resolve('./data/tool-guides');
+    delete require.cache[guidePath];
+    return require('./data/tool-guides');
+}
+
+function normalizeKnowledgeToolName(toolName) {
+    return String(toolName || '').trim().replace(/^cocos_/, '');
+}
+
+function queryToolGuide(args) {
+    const query = String((args && args.query) || '').trim();
+    const guides = loadFreshToolGuides();
+    if (!query) {
+        return {
+            success: true,
+            data: guides.getToolIndex(),
+            message: '已获取 Cocos MCP 工具指南索引。'
+        };
+    }
+
+    const parts = query.split('.');
+    const toolName = normalizeKnowledgeToolName(parts[0]);
+    const actionName = parts[1];
+    if (actionName) {
+        const actionGuide = guides.getActionGuide(toolName, actionName);
+        if (!actionGuide) {
+            const actionNames = guides.getActionNames(toolName);
+            if (!actionNames) {
+                return {
+                    success: false,
+                    error: `Unknown tool "${query}".`,
+                    instruction: `Available tools: ${guides.getToolNames().join(', ')}`
+                };
+            }
+            return {
+                success: false,
+                error: `Unknown action "${actionName}" for tool "${toolName}".`,
+                instruction: `Available actions: ${actionNames.join(', ')}`
+            };
+        }
+        return {
+            success: true,
+            data: actionGuide,
+            message: `Tool guide for ${toolName}.${actionName}: ${actionGuide.desc || ''}`
+        };
+    }
+
+    const toolGuide = guides.getToolGuide(toolName);
+    if (!toolGuide) {
+        return {
+            success: false,
+            error: `Unknown tool "${query}".`,
+            instruction: `Available tools: ${guides.getToolNames().join(', ')}`
+        };
+    }
+    return {
+        success: true,
+        data: toolGuide,
+        message: `Tool "${toolName}": ${toolGuide.desc} Actions: ${Object.keys(toolGuide.actions || {}).join(', ')}`
+    };
 }
 
 class CocosTools {
@@ -113,6 +178,10 @@ class CocosTools {
                 success: false,
                 error: `未知 cocos 工具：${toolName}。可用工具：${Object.keys(this.handlers).join(', ')}`
             };
+        }
+
+        if (toolName === 'knowledge' && args && args.topic === 'tool_guide') {
+            return queryToolGuide(args);
         }
 
         if (isDebugMode()) {

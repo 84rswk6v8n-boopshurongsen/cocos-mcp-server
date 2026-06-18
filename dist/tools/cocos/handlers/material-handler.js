@@ -81,6 +81,60 @@ function dbUrlToFilePath(dbUrl) {
     return path.join(projectRoot(), 'assets', normalized.slice('db://assets/'.length));
 }
 
+function getEditorCandidateRoots() {
+    const roots = new Set();
+    const add = (value) => {
+        if (value && typeof value === 'string') {
+            roots.add(value);
+        }
+    };
+    try {
+        add(globalThis.Editor && Editor.App && Editor.App.path);
+        add(globalThis.Editor && Editor.App && Editor.App.home);
+        add(globalThis.Editor && Editor.Project && Editor.Project.path);
+    }
+    catch (_) {}
+    add(process.resourcesPath);
+    add(process.execPath && path.dirname(process.execPath));
+    add(process.cwd());
+    return Array.from(roots).filter((root) => root && fs.existsSync(root));
+}
+
+function findInternalEffectFile(dbUrl) {
+    const normalized = normalizeSlash(dbUrl);
+    if (!normalized.startsWith('db://internal/') || !normalized.endsWith('.effect')) {
+        return null;
+    }
+    const fileName = path.basename(normalized);
+    const relative = normalized.slice('db://internal/'.length);
+    const suffixes = [
+        relative,
+        `resources/${relative}`,
+        `resources/3d/engine/editor/assets/internal/${relative}`,
+        `resources/3d/engine/editor/assets/${relative}`,
+        `resources/resources/3d/engine/editor/assets/internal/${relative}`,
+        `resources/resources/3d/engine/editor/assets/${relative}`
+    ];
+    for (const root of getEditorCandidateRoots()) {
+        for (const suffix of suffixes) {
+            const candidate = path.join(root, ...normalizeSlash(suffix).split('/'));
+            if (fs.existsSync(candidate)) {
+                return candidate;
+            }
+        }
+    }
+    for (const root of getEditorCandidateRoots()) {
+        const files = walkFiles(root, (file) => path.basename(file) === fileName, 3000);
+        const matched = files.find((file) => normalizeSlash(file).endsWith(normalizeSlash(relative)))
+            || files.find((file) => normalizeSlash(file).includes('/internal/') && path.basename(file) === fileName)
+            || files[0];
+        if (matched) {
+            return matched;
+        }
+    }
+    return null;
+}
+
 function filePathToDbUrl(filePath) {
     const root = path.join(projectRoot(), 'assets');
     const relative = path.relative(root, filePath);
@@ -934,6 +988,66 @@ class MaterialHandler {
         return null;
     }
 
+    async queryAssetFilePath(dbUrl) {
+        if (!dbUrl || !globalThis.Editor || !Editor.Message || !Editor.Message.request) {
+            return null;
+        }
+        const attempts = [
+            ['asset-db', 'query-path', dbUrl],
+            ['asset-db', 'query-asset-path', dbUrl],
+            ['asset-db', 'query-url-to-path', dbUrl],
+            ['asset-db', 'query-asset-info', dbUrl],
+            ['asset-db', 'query-info', dbUrl],
+            ['asset-db', 'query-asset', dbUrl]
+        ];
+        const pickPath = (result) => {
+            if (typeof result === 'string' && result) {
+                return result;
+            }
+            if (!result || typeof result !== 'object') {
+                return null;
+            }
+            const candidates = [
+                result.path,
+                result.file,
+                result.source,
+                result.nativeAsset,
+                result.value,
+                result.asset && result.asset.path,
+                result.asset && result.asset.file,
+                result.asset && result.asset.source
+            ];
+            return candidates.find((item) => typeof item === 'string' && item) || null;
+        };
+        for (const [channel, message, payload] of attempts) {
+            try {
+                const result = await Editor.Message.request(channel, message, payload);
+                const filePath = pickPath(result);
+                if (filePath && fs.existsSync(filePath)) {
+                    return filePath;
+                }
+            }
+            catch (_) {}
+        }
+        return null;
+    }
+
+    async resolveEffectFilePath(dbUrl) {
+        const localPath = dbUrlToFilePath(dbUrl);
+        if (localPath && fs.existsSync(localPath)) {
+            return { filePath: localPath, source: 'db://assets' };
+        }
+        const assetDbPath = await this.queryAssetFilePath(dbUrl);
+        if (assetDbPath && fs.existsSync(assetDbPath)) {
+            return { filePath: assetDbPath, source: 'asset-db' };
+        }
+        const internalPath = findInternalEffectFile(dbUrl);
+        if (internalPath && fs.existsSync(internalPath)) {
+            return { filePath: internalPath, source: 'internal-search' };
+        }
+        return { filePath: localPath || assetDbPath || internalPath || null, source: null };
+    }
+
     async refreshAsset(dbUrl) {
         if (!globalThis.Editor || !Editor.Message || !Editor.Message.request) {
             return { success: false, skipped: true, reason: 'asset-db 刷新接口不可用' };
@@ -1174,13 +1288,23 @@ class MaterialHandler {
         if (!dbUrl) {
             return fail('url 是必填参数，请提供 effect 文件路径。');
         }
-        const filePath = dbUrlToFilePath(dbUrl);
+        const resolved = await this.resolveEffectFilePath(dbUrl);
+        const filePath = resolved.filePath;
         const text = readTextIfExists(filePath);
         if (!text) {
-            return fail(`无法读取 effect 文件：${dbUrl}`, { url: dbUrl, filePath });
+            return fail(`无法读取 effect 文件：${dbUrl}`, {
+                url: dbUrl,
+                filePath,
+                source: resolved.source,
+                hint: dbUrl.startsWith('db://internal/')
+                    ? '当前是 Cocos 内置 effect，请确认 AssetDB 能返回真实文件路径，或使用 db://assets 下的自定义 .effect 测试。'
+                    : undefined
+            });
         }
         return ok(Object.assign({
             url: dbUrl,
+            filePath,
+            source: resolved.source,
             name: path.basename(dbUrl),
             size: Buffer.byteLength(text, 'utf8')
         }, parseEffectText(text)), '已读取 effect 浅层信息。');
