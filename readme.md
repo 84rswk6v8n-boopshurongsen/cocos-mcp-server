@@ -21,31 +21,34 @@ Cocos MCP Server 是一个面向 Cocos Creator 3.7+ / 3.8.x 的 MCP 插件，让
 
 更多安装说明见 [INSTALL.md](./INSTALL.md)。
 
-## 21 个工具简表
+## 24 个工具简表
 
 | 工具 | 功能简介 |
 | --- | --- |
-| `scene` | 场景管理工具，用于打开、保存、创建场景，读取层级，查询场景状态，执行撤销事务，检测场景引用和组件类型。 |
-| `node` | 节点工具，用于查找、创建、修改、移动、复制、删除节点，设置 Transform，挂载或移除脚本，并支持批量修改。 |
-| `component` | 组件工具，用于添加、移除、查看和配置组件属性，查询可用组件类型，绑定按钮点击事件并支持批量绑定。 |
-| `prefab` | 预制体工具，用于查询、创建、实例化、删除、进入编辑、保存编辑、应用或回退预制体变更。 |
-| `asset` | 资源工具，用于搜索、创建、复制、移动、删除、导入、刷新资源，查询依赖，以及在 UUID、路径和 URL 之间转换。 |
-| `editor` | 编辑器工具，用于读取项目信息、运行或停止预览、构建项目、打开构建面板、读取日志、管理偏好设置和重载编辑器。 |
-| `view` | 视图工具，用于切换 Gizmo、2D/3D 模式、网格、图标显示，聚焦节点，对齐相机，并管理参考图。 |
-| `composite` | 复合 UI 工具，用一次调用创建按钮、文本、图片等完整 UI，也可挂载脚本并完成属性绑定，适合快速搭建界面。 |
-| `knowledge` | 知识查询工具，用于查询 Cocos 组件属性、UI 规则、布局模式、动画配方、最佳实践和工具使用指南。 |
-| `validate` | 深度校验工具，用于检查 UI 重叠、越界、资源引用一致性、层级深度和命名问题。 |
+| `scene` | 场景管理工具，用于打开、保存、创建、关闭场景，读取层级和快照，查询场景状态，执行撤销事务，执行编辑器方法或脚本，检测场景引用、组件类型和脚本类。 |
+| `node` | 节点工具，用于查找、创建、修改、移动、排序、复制、粘贴、剪切、删除节点，设置 Transform、尺寸、锚点和激活状态，挂载或移除脚本，并支持批量修改。 |
+| `component` | 组件工具，用于添加、移除、查看和配置组件属性，查询可用组件类型，绑定按钮、滑块、开关事件，并支持批量点击事件绑定。 |
+| `prefab` | 预制体工具，用于列出、检查、校验、创建、实例化、删除、解绑、进入编辑、保存编辑、退出编辑、应用或回退预制体变更。 |
+| `asset` | 资源工具，用于搜索、查询详情、创建、保存、复制、移动、删除、导入、批量导入、刷新、重新导入资源，查询依赖、清单和资源就绪状态，并在 UUID、路径和 URL 之间转换。 |
+| `editor` | 编辑器工具，用于读取项目信息和项目设置，运行、停止或查询预览，构建项目，打开构建面板，读取控制台和日志，管理偏好设置，查询服务器网络信息并重载编辑器。 |
+| `view` | 视图工具，用于切换 Gizmo 工具、坐标系、轴心、2D/3D 模式、网格、图标显示，聚焦节点，对齐相机，并添加、切换、定位、缩放、设置透明度或清理参考图。 |
+| `composite` | 复合 UI 工具，用于一次调用创建按钮、文本、图片和内置 UI 控件，也可挂载脚本并完成属性绑定，支持 Widget 对齐和批量生成 UI 元素。 |
+| `knowledge` | 知识查询工具，用于查询 Cocos 组件属性、UI 规则、布局模式、Widget 策略、节点结构、动画配方、最佳实践和工具使用指南。 |
+| `validate` | 深度校验工具，用于检查 UI 重叠、越界、资源引用一致性、层级深度和命名问题，适合在 AI 批量改场景后做质量检查。 |
 | `template` | UI 模板工具，用于列出并应用内置模板，例如弹窗、滚动列表、导航栏和设置页。 |
-| `capture` | 场景快照工具，用于导出场景或指定节点子树的结构化 JSON，帮助 AI 理解布局、尺寸、位置和组件信息。 |
-| `builder` | JSON 构建工具，用于根据声明式节点树一次性创建复杂层级和组件，适合批量生成 UI 或原型结构。 |
-| `animation` | 动画工具，用于播放控制、创建和编辑动画剪辑、轨道、关键帧、曲线、事件、预设和批量动画操作。 |
+| `capture` | 场景快照工具，用于导出场景或指定节点子树的结构化 JSON，帮助 AI 理解布局、尺寸、位置、组件、文本和渲染信息。 |
+| `builder` | JSON 构建工具，用于根据声明式节点树一次性创建复杂层级和组件，适合批量生成 UI、原型结构或多层节点树。 |
+| `animation` | 动画工具，用于播放控制、创建和编辑动画剪辑、轨道、关键帧、曲线、事件、预设和批量动画操作，也支持文件写入模式。 |
 | `spine` | Spine 工具，用于读取 `sp.Skeleton` 动画和皮肤，设置动画、皮肤、属性、骨骼数据和 socket。 |
-| `label` | 文本工具，用于管理 `cc.Label`、`cc.RichText`、`cc.EditBox` 的文本、字体、样式、描边、阴影和批量样式。 |
-| `runtime` | 运行态桥接工具，用于在浏览器预览页中读取运行时场景树、节点、组件、统计信息，并支持修改节点激活和 Transform。 |
+| `label` | 文本工具，用于管理 `cc.Label`、`cc.RichText`、`cc.EditBox` 的文本、字体、字号、颜色、对齐、溢出、描边、阴影和批量样式。 |
+| `physics` | 物理配置工具，用于检查和配置刚体、碰撞体、触发区、投射物碰撞、碰撞分组、碰撞掩码、物理材质和物理调试；运行态支持射线、区域和碰撞体可视化。 |
+| `material` | 材质与 Shader 工具，用于列出、创建、检查材质和 effect，设置材质属性、颜色、贴图和 define，检查 Renderer 材质槽，分配、清空、替换材质，查找使用处并校验材质引用。 |
+| `shader_debug` | Shader Debug Lab 工具，用于自动创建/检查内置材质测试场景，对单个或批量材质生成截图、debug JSON、contact sheet 和 HTML 报告，方便 AI 自检 shader 渲染结果。 |
+| `vfx` | VFX/粒子效果工具，用于列出场景和资源中的特效，检查、创建、实例化、编辑、绑定资源、删除和校验粒子、拖尾、线条、公告板等常见特效节点。 |
+| `animation_mask` | Animation Mask 工具，用于创建、查询、更新 `.animask` 资源，设置、批量设置、移除和清空骨骼遮罩，检查骨骼来源，校验并规范化骨骼路径。 |
+| `animation_graph` | Animation Graph 工具，用于编辑 `.animgraph` 资源，管理参数、状态、动画状态、连线、过渡条件、Layer、速度、权重、遮罩，并校验动画图兼容性。 |
 | `preview` | 浏览器预览工具，用于启动、停止和查询预览状态，返回预览地址、端口、启动时间和服务复用情况。 |
-| `animation_mask` | Animation Mask 工具，用于创建、查询、更新 `.animask` 资源，批量设置骨骼遮罩，校验骨骼路径。 |
-| `animation_graph` | Animation Graph 工具，用于编辑 `.animgraph` 资源，管理参数、状态、连线、过渡条件、Layer，并校验动画图。 |
-| `physics` | 物理配置工具，用于检查和配置刚体、碰撞体、触发区、投射物碰撞、碰撞分组、物理材质和物理调试。 |
+| `runtime` | 运行态桥接工具，用于在浏览器预览页中读取运行时场景树、节点、组件、Renderer、材质、控制台日志和帧统计信息，并支持修改节点激活、Transform 和调用组件方法。 |
 
 ## 功能图文介绍
 
@@ -97,6 +100,14 @@ Cocos MCP Server 是一个面向 Cocos Creator 3.7+ / 3.8.x 的 MCP 插件，让
 - 构建复杂 UI 层级时优先使用 `builder`，简单按钮、文本、图片可用 `composite`。
 - 检查断裂资源引用可用 `scene.validate_scene`，做布局和层级深度检查可用 `validate`。
 - 不熟悉某个工具 action 时，可先用 `knowledge` 查询 `tool_guide`。
+
+## v1.7.8 Update
+
+- Added packaged `cocos_shader_debug` lab workflow: `setup`, `capture`, `suite`/`validate_suite`, and `smoke_test`.
+- The shader debug lab auto-ensures `db://assets/mcp_shader_debug` from the bundled template and keeps captures/reports in `assets/mcp_shader_debug/captures`.
+- Batch validation now writes PNG captures, per-material debug JSON, summary JSON, striped-border contact sheet PNG, and HTML report.
+- Tool schema descriptions now document the recommended automation flow and failure fields: `diagnostics`, `visualCheck`, `materialInspection`, `camera`, `targets`, `imagePath`, and `debugPath`.
+- Editor restart entries now only use the Cocos Dashboard/editor restart IPC. External PowerShell/direct CocosCreator fallback has been removed.
 
 ## v1.7.7 更新内容
 

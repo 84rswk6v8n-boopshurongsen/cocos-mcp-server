@@ -1,0 +1,104 @@
+﻿{
+    "asset":  {
+                  "version":  "2.0",
+                  "generator":  "MCP Shader Debug Mesh Generator"
+              },
+    "buffers":  [
+                    {
+                        "uri":  "preview_sphere.bin",
+                        "byteLength":  23712
+                    }
+                ],
+    "bufferViews":  [
+                        {
+                            "buffer":  0,
+                            "byteOffset":  0,
+                            "byteLength":  6732,
+                            "target":  34962
+                        },
+                        {
+                            "buffer":  0,
+                            "byteOffset":  6732,
+                            "byteLength":  6732,
+                            "target":  34962
+                        },
+                        {
+                            "buffer":  0,
+                            "byteOffset":  13464,
+                            "byteLength":  4488,
+                            "target":  34962
+                        },
+                        {
+                            "buffer":  0,
+                            "byteOffset":  17952,
+                            "byteLength":  5760,
+                            "target":  34963
+                        }
+                    ],
+    "accessors":  [
+                      {
+                          "bufferView":  0,
+                          "componentType":  5126,
+                          "count":  561,
+                          "type":  "VEC3",
+                          "min":  [
+                                      -0.64999997615814209,
+                                      -0.64999997615814209,
+                                      -0.64999997615814209
+                                  ],
+                          "max":  [
+                                      0.64999997615814209,
+                                      0.64999997615814209,
+                                      0.64999997615814209
+                                  ]
+                      },
+                      {
+                          "bufferView":  1,
+                          "componentType":  5126,
+                          "count":  561,
+                          "type":  "VEC3"
+                      },
+                      {
+                          "bufferView":  2,
+                          "componentType":  5126,
+                          "count":  561,
+                          "type":  "VEC2"
+                      },
+                      {
+                          "bufferView":  3,
+                          "componentType":  5123,
+                          "count":  2880,
+                          "type":  "SCALAR"
+                      }
+                  ],
+    "meshes":  [
+                   {
+                       "name":  "preview_sphere",
+                       "primitives":  [
+                                          {
+                                              "attributes":  {
+                                                                 "POSITION":  0,
+                                                                 "NORMAL":  1,
+                                                                 "TEXCOORD_0":  2
+                                                             },
+                                              "indices":  3,
+                                              "mode":  4
+                                          }
+                                      ]
+                   }
+               ],
+    "nodes":  [
+                  {
+                      "name":  "preview_sphere",
+                      "mesh":  0
+                  }
+              ],
+    "scenes":  [
+                   {
+                       "nodes":  [
+                                     0
+                                 ]
+                   }
+               ],
+    "scene":  0
+}

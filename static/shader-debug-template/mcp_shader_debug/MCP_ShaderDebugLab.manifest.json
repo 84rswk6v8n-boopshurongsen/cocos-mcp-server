@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "scene": "db://assets/mcp_shader_debug/MCP_ShaderDebugLab.scene",
+  "root": "MCP_ShaderDebugLabRoot",
+  "camera": "MCP_ShaderDebugLabRoot/CaptureRig/ShaderDebugCamera",
+  "controller": {
+    "node": "MCP_ShaderDebugLabRoot",
+    "component": "MCPShaderDebugLab",
+    "script": "db://assets/mcp_shader_debug/MCPShaderDebugLab.ts",
+    "methods": {
+      "rebuildGeometry": "rebuildGeometry",
+      "applyMaterial": "applyMaterialAndCollectDebug",
+      "captureMaterial": "captureMaterialAndReadPixels",
+      "captureMaterialToPng": "captureMaterialAndSavePng"
+    }
+  },
+  "defaultMaterial": "db://assets/mcp_shader_debug/MCP_Debug_Neutral_Lit.mtl",
+  "unlitReferenceMaterial": "db://assets/mcp_shader_debug/MCP_Debug_Neutral_Unlit.mtl",
+  "modelAssets": {
+    "sphere": {
+      "source": "db://assets/mcp_shader_debug/models/preview_sphere.gltf",
+      "mesh": "fb0c119e-1be0-4b8f-8919-bde29708b685@fd06e"
+    },
+    "box": {
+      "source": "db://assets/mcp_shader_debug/models/preview_box.gltf",
+      "mesh": "78e70dcb-cc77-45d4-8cfd-dcf0096f3911@c2c7c"
+    },
+    "plane": {
+      "source": "db://assets/mcp_shader_debug/models/preview_plane.gltf",
+      "mesh": "20d90e45-c335-45d8-9111-b408e541b7b3@3ed1c"
+    },
+    "floor": {
+      "source": "db://assets/mcp_shader_debug/models/reference_floor.gltf",
+      "mesh": "fa2b69dd-dd04-4c35-9651-846febe91dbd@bef3c"
+    }
+  },
+  "materialTargets": [
+    {
+      "name": "sphere",
+      "node": "MCP_ShaderDebugLabRoot/Targets/Preview_Sphere",
+      "renderer": "cc.MeshRenderer",
+      "slot": 0
+    },
+    {
+      "name": "box",
+      "node": "MCP_ShaderDebugLabRoot/Targets/Preview_Box",
+      "renderer": "cc.MeshRenderer",
+      "slot": 0
+    },
+    {
+      "name": "plane",
+      "node": "MCP_ShaderDebugLabRoot/Targets/Preview_Plane",
+      "renderer": "cc.MeshRenderer",
+      "slot": 0
+    }
+  ],
+  "referenceNodes": [
+    "MCP_ShaderDebugLabRoot/Reference/Reference_Floor"
+  ],
+  "validationMaterials": [
+    {
+      "name": "neutral_lit",
+      "url": "db://assets/mcp_shader_debug/MCP_Debug_Neutral_Lit.mtl",
+      "category": "builtin-standard"
+    },
+    {
+      "name": "neutral_unlit",
+      "url": "db://assets/mcp_shader_debug/MCP_Debug_Neutral_Unlit.mtl",
+      "category": "builtin-unlit"
+    },
+    {
+      "name": "lit_red",
+      "url": "db://assets/mcp_shader_debug/test_materials/MCP_Test_Lit_Red.mtl",
+      "category": "builtin-standard"
+    },
+    {
+      "name": "lit_green",
+      "url": "db://assets/mcp_shader_debug/test_materials/MCP_Test_Lit_Green.mtl",
+      "category": "builtin-standard"
+    },
+    {
+      "name": "unlit_magenta",
+      "url": "db://assets/mcp_shader_debug/test_materials/MCP_Test_Unlit_Magenta.mtl",
+      "category": "builtin-unlit"
+    },
+    {
+      "name": "unlit_yellow",
+      "url": "db://assets/mcp_shader_debug/test_materials/MCP_Test_Unlit_Yellow.mtl",
+      "category": "builtin-unlit"
+    }
+  ],
+  "capture": {
+    "width": 1280,
+    "height": 720,
+    "background": [38, 40, 44, 255],
+    "source": "ShaderDebugCamera",
+    "owner": "mcp_editor_tool",
+    "cameraMode": "fixed_scene_camera",
+    "fixedCamera": {
+      "node": "MCP_ShaderDebugLabRoot/CaptureRig/ShaderDebugCamera",
+      "position": [0, 1.8, 5.2],
+      "rotationEuler": [-17, 0, 0],
+      "projection": "perspective",
+      "fov": 75,
+      "near": 0.05,
+      "far": 100,
+      "rect": [0, 0, 1, 1]
+    },
+    "flow": "call controller.methods.applyMaterial, then capture ShaderDebugCamera and attach imagePath to the returned debug payload",
+    "expectedVisibleTargets": ["sphere", "box", "plane"]
+  }
+}

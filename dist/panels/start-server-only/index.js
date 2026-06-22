@@ -38,9 +38,18 @@ const text = {
     reloadingPlugin: '\u6b63\u5728\u91cd\u65b0\u52a0\u8f7d\u63d2\u4ef6...',
     reloadPluginSent: '\u63d2\u4ef6\u91cd\u65b0\u52a0\u8f7d\u547d\u4ee4\u5df2\u53d1\u9001\u3002',
     reloadPluginFailed: '\u91cd\u65b0\u52a0\u8f7d\u63d2\u4ef6\u5931\u8d25\u3002',
+    restartingEditor: '\u6b63\u5728\u91cd\u542f Cocos Creator...',
+    restartEditorConfirm: '\u8bf7\u5148\u4fdd\u5b58\u5f53\u524d\u5185\u5bb9\u3002\u786e\u5b9a\u8981\u901a\u8fc7 Cocos Dashboard \u91cd\u542f\u5f53\u524d\u9879\u76ee\u5417\uff1f',
+    restartEditorSent: 'Cocos Creator \u91cd\u542f\u547d\u4ee4\u5df2\u53d1\u9001\u3002',
+    restartEditorFailed: '\u91cd\u542f Cocos Creator \u5931\u8d25\u3002',
     configuringCodex: '\u6b63\u5728\u5199\u5165 Codex MCP \u914d\u7f6e...',
     configureCodexOk: '\u5df2\u5199\u5165 Codex MCP \u672c\u5730\u6865\u63a5\u914d\u7f6e\uff0c\u65b0\u5f00 Codex \u5bf9\u8bdd\u540e\u751f\u6548\u3002',
     configureCodexFailed: '\u5199\u5165 Codex MCP \u914d\u7f6e\u5931\u8d25\u3002',
+    onlineVersionChecking: '\u5728\u7ebf\u7248\u672c\uff1a\u68c0\u6d4b\u4e2d...',
+    onlineVersionUnavailable: '\u5728\u7ebf\u7248\u672c\uff1a\u83b7\u53d6\u5931\u8d25',
+    onlineVersionPrefix: '\u5728\u7ebf\u7248\u672c\uff1a',
+    onlineVersionUpdate: '\u53ef\u66f4\u65b0',
+    onlineVersionLatest: '\u5df2\u662f\u6700\u65b0',
 };
 
 module.exports = Editor.Panel.define({
@@ -51,6 +60,7 @@ module.exports = Editor.Panel.define({
         stopMcpServer: '#stopMcpServer',
         openToolVisualizer: '#openToolVisualizer',
         reloadPlugin: '#reloadPlugin',
+        restartEditor: '#restartEditor',
         configureCodex: '#configureCodex',
         refreshStatus: '#refreshStatus',
         refreshTools: '#refreshTools',
@@ -85,6 +95,7 @@ module.exports = Editor.Panel.define({
         const stopButton = this.$.stopMcpServer;
         const openToolVisualizerButton = this.$.openToolVisualizer;
         const reloadPluginButton = this.$.reloadPlugin;
+        const restartEditorButton = this.$.restartEditor;
         const configureCodexButton = this.$.configureCodex;
         const refreshButton = this.$.refreshStatus;
         const refreshToolsButton = this.$.refreshTools;
@@ -115,7 +126,40 @@ module.exports = Editor.Panel.define({
             }
         };
 
-        setText(this.$.mcpVersion, `MCP \u7248\u672c\uff1av${packageJson.version || '-'}`);
+        const localPluginVersion = packageJson.version || '-';
+        const updateVersionText = (onlineInfo) => {
+            const lines = [`MCP \u7248\u672c\uff1a\u672c\u5730 v${localPluginVersion}`];
+            if (!onlineInfo) {
+                lines.push(text.onlineVersionChecking);
+            } else if (onlineInfo.success === false) {
+                lines.push(text.onlineVersionUnavailable);
+            } else if (onlineInfo.latestVersion) {
+                const suffix = onlineInfo.hasUpdate ? ` \uff08${text.onlineVersionUpdate}\uff09` : ` \uff08${text.onlineVersionLatest}\uff09`;
+                lines.push(`${text.onlineVersionPrefix}v${onlineInfo.latestVersion}${suffix}`);
+                if (this.$.mcpVersion) {
+                    this.$.mcpVersion.title = onlineInfo.htmlUrl || onlineInfo.downloadUrl || '';
+                }
+            } else {
+                lines.push(text.onlineVersionUnavailable);
+            }
+            setText(this.$.mcpVersion, lines.join('\n'));
+        };
+
+        updateVersionText(null);
+
+        const refreshOnlineVersion = async () => {
+            try {
+                const result = await Editor.Message.request('cocos-mcp-server', 'dev-get-online-version');
+                updateVersionText(result);
+            } catch (error) {
+                updateVersionText({
+                    success: false,
+                    message: error && error.message ? error.message : String(error),
+                });
+            }
+        };
+
+        refreshOnlineVersion();
 
         const clearElement = (element) => {
             if (element) {
@@ -872,6 +916,36 @@ module.exports = Editor.Panel.define({
             }
         };
 
+        const restartEditor = async () => {
+            const confirmed = typeof window.confirm === 'function'
+                ? window.confirm(text.restartEditorConfirm)
+                : true;
+            if (!confirmed) {
+                return;
+            }
+
+            restartEditorButton.disabled = true;
+            setText(this.$.statusMessage, text.restartingEditor);
+
+            try {
+                const result = await Editor.Message.request('cocos-mcp-server', 'dev-restart-editor');
+                if (!result || result.success === false) {
+                    setText(this.$.statusMessage, result && result.message ? result.message : text.restartEditorFailed);
+                    restartEditorButton.disabled = false;
+                    return;
+                }
+                setText(this.$.statusMessage, result.message || text.restartEditorSent);
+                setTimeout(() => {
+                    if (restartEditorButton && restartEditorButton.isConnected) {
+                        restartEditorButton.disabled = false;
+                    }
+                }, 8000);
+            } catch (error) {
+                setText(this.$.statusMessage, error && error.message ? error.message : text.restartEditorFailed);
+                restartEditorButton.disabled = false;
+            }
+        };
+
         const configureCodex = async () => {
             const port = getPreferredPort();
             if (!port) {
@@ -957,6 +1031,7 @@ module.exports = Editor.Panel.define({
         stopButton.addEventListener('click', stopServer);
         openToolVisualizerButton.addEventListener('click', openToolVisualizer);
         reloadPluginButton.addEventListener('click', reloadPlugin);
+        restartEditorButton.addEventListener('click', restartEditor);
         configureCodexButton.addEventListener('click', configureCodex);
         this.$.mcpWechatContact.addEventListener('click', async () => {
             await copyText('13272695146');

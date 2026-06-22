@@ -19,6 +19,7 @@ const { FontHandler } = require('./handlers/font-handler');
 const { PhysicsHandler } = require('./handlers/physics-handler');
 const { MaterialHandler } = require('./handlers/material-handler');
 const { VfxHandler } = require('./handlers/vfx-handler');
+const { ShaderDebugHandler } = require('./handlers/shader-debug-handler');
 const { MessageRecorder } = require('./utils/message-recorder');
 const { getExtendedToolDefinitions, executeExtendedTool } = require('./extended-tools-registry');
 
@@ -51,6 +52,7 @@ function createCoreHandlers() {
         label: new FontHandler(),
         physics: new PhysicsHandler(),
         material: new MaterialHandler(),
+        shader_debug: new ShaderDebugHandler(),
         vfx: new VfxHandler()
     };
 }
@@ -66,6 +68,76 @@ function upsertToolDefinitions(tools, definitions) {
         }
     }
     return tools;
+}
+
+function patchEditorRestartToolDefinition(tools) {
+    const editorTool = tools.find((tool) => tool && (tool.name === 'editor' || tool.name === 'cocos_editor'));
+    if (!editorTool || !editorTool.inputSchema || !editorTool.inputSchema.properties) {
+        return tools;
+    }
+
+    const properties = editorTool.inputSchema.properties;
+    if (properties.action && Array.isArray(properties.action.enum)) {
+        for (const actionName of ['restart', 'restart_status']) {
+            if (!properties.action.enum.includes(actionName)) {
+                properties.action.enum.push(actionName);
+            }
+        }
+    }
+
+    properties.preferDashboard = properties.preferDashboard || {
+        type: 'boolean',
+        description: 'Restart actions: use Cocos Dashboard IPC when available. Default true.'
+    };
+    if (properties.allowDirectFallback) {
+        delete properties.allowDirectFallback;
+    }
+    properties.dryRun = properties.dryRun || {
+        type: 'boolean',
+        description: 'Restart actions: return the planned restart path without restarting.'
+    };
+
+    const restartNote = 'Restart actions: use restart_status to check Dashboard IPC and restart to request a Dashboard-preserving editor restart.';
+    if (typeof editorTool.description === 'string' && !editorTool.description.includes('restart_status')) {
+        editorTool.description = `${editorTool.description}\n${restartNote}`;
+    }
+    return tools;
+}
+
+function hasNonAscii(value) {
+    return typeof value === 'string' && /[^\x00-\x7F]/.test(value);
+}
+
+function getAsciiToolDescription(toolName) {
+    const readable = String(toolName || 'cocos_tool').replace(/^cocos_/, '').replace(/_/g, ' ');
+    return `Cocos ${readable} tool. Use the action parameter to choose an operation.`;
+}
+
+function sanitizeSchemaDescriptions(value, path = []) {
+    if (!value || typeof value !== 'object') {
+        return value;
+    }
+    for (const [key, child] of Object.entries(value)) {
+        const nextPath = path.concat(key);
+        if (key === 'description' && hasNonAscii(child)) {
+            const owner = path[path.length - 1] || 'value';
+            value[key] = `Description for ${owner}.`;
+            continue;
+        }
+        sanitizeSchemaDescriptions(child, nextPath);
+    }
+    return value;
+}
+
+function sanitizeToolDefinitionText(tool) {
+    if (!tool || typeof tool !== 'object') {
+        return tool;
+    }
+    if (hasNonAscii(tool.description)) {
+        tool.description = getAsciiToolDescription(tool.name);
+    }
+    sanitizeSchemaDescriptions(tool.inputSchema);
+    return tool;
 }
 
 function loadFreshToolGuides() {
@@ -85,7 +157,7 @@ function queryToolGuide(args) {
         return {
             success: true,
             data: guides.getToolIndex(),
-            message: '已获取 Cocos MCP 工具指南索引。'
+            message: 'Cocos MCP tool guide index loaded.'
         };
     }
 
@@ -153,12 +225,14 @@ class CocosTools {
                 });
             }
             catch (error) {
-                console.error(`[CocosTools] 获取工具定义失败：${name}`, error && error.message ? error.message : error);
+                console.error(`[CocosTools] Failed to load tool definition: ${name}`, error && error.message ? error.message : error);
             }
         }
 
         upsertToolDefinitions(tools, getExtendedToolDefinitions());
-        console.log(`[CocosTools] getTools() 已返回 ${tools.length} 个工具：${tools.map((tool) => tool.name).join(', ')}`);
+        patchEditorRestartToolDefinition(tools);
+        tools.forEach(sanitizeToolDefinitionText);
+        console.log(`[CocosTools] getTools() returned ${tools.length} tools: ${tools.map((tool) => tool.name).join(', ')}`);
         return tools;
     }
 
@@ -176,7 +250,7 @@ class CocosTools {
         if (!handler) {
             return {
                 success: false,
-                error: `未知 cocos 工具：${toolName}。可用工具：${Object.keys(this.handlers).join(', ')}`
+                error: `Unknown Cocos tool: ${toolName}. Available tools: ${Object.keys(this.handlers).join(', ')}`
             };
         }
 

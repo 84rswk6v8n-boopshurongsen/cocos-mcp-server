@@ -664,6 +664,135 @@ function devGetRegisteredTools() {
     }
 }
 
+function normalizeReleaseVersion(version) {
+    return String(version || '').trim().replace(/^v/i, '');
+}
+
+function compareReleaseVersions(a, b) {
+    const left = normalizeReleaseVersion(a).split(/[.-]/).map((part) => {
+        const value = Number.parseInt(part, 10);
+        return Number.isFinite(value) ? value : 0;
+    });
+    const right = normalizeReleaseVersion(b).split(/[.-]/).map((part) => {
+        const value = Number.parseInt(part, 10);
+        return Number.isFinite(value) ? value : 0;
+    });
+    const length = Math.max(left.length, right.length);
+    for (let index = 0; index < length; index++) {
+        const leftValue = left[index] || 0;
+        const rightValue = right[index] || 0;
+        if (leftValue > rightValue) {
+            return 1;
+        }
+        if (leftValue < rightValue) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+function requestJson(url, headers = {}, timeout = 10000) {
+    return new Promise((resolve, reject) => {
+        const https = require('https');
+        const request = https.request(url, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/vnd.github+json',
+                'User-Agent': 'cocos-mcp-server-version-checker',
+                'X-GitHub-Api-Version': '2022-11-28',
+                ...headers,
+            },
+            timeout,
+        }, (response) => {
+            const chunks = [];
+            response.on('data', (chunk) => chunks.push(chunk));
+            response.on('end', () => {
+                const body = Buffer.concat(chunks).toString('utf8');
+                if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+                    requestJson(response.headers.location, headers, timeout).then(resolve, reject);
+                    return;
+                }
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    reject(new Error(`GitHub Releases request failed: HTTP ${response.statusCode}`));
+                    return;
+                }
+                try {
+                    resolve(JSON.parse(body));
+                } catch (error) {
+                    reject(new Error('GitHub Releases response is not valid JSON.'));
+                }
+            });
+        });
+
+        request.on('timeout', () => {
+            request.destroy(new Error('GitHub Releases request timed out.'));
+        });
+        request.on('error', reject);
+        request.end();
+    });
+}
+
+async function devGetOnlineVersion() {
+    const owner = '84rswk6v8n-boopshurongsen';
+    const repo = 'cocos-mcp-server';
+    const currentVersion = normalizeReleaseVersion(require('../package.json').version || '');
+    const env = typeof process !== 'undefined' && process.env ? process.env : {};
+    const token = env.COCOS_MCP_GITHUB_TOKEN || env.GITHUB_TOKEN || env.GH_TOKEN || '';
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+    try {
+        const releases = await requestJson(`https://api.github.com/repos/${owner}/${repo}/releases?per_page=20`, headers);
+        const release = (Array.isArray(releases) ? releases : []).find((item) => item && !item.draft) || null;
+        if (!release) {
+            return {
+                success: false,
+                currentVersion,
+                latestVersion: '',
+                hasUpdate: false,
+                message: 'No GitHub Releases found.',
+            };
+        }
+
+        const latestVersion = normalizeReleaseVersion(release.tag_name || release.name || '');
+        const assets = Array.isArray(release.assets) ? release.assets : [];
+        const firstAsset = assets.find((asset) => asset && asset.browser_download_url);
+        const downloadUrl = firstAsset
+            ? firstAsset.browser_download_url
+            : release.zipball_url || release.html_url || '';
+
+        return {
+            success: true,
+            repository: `${owner}/${repo}`,
+            currentVersion,
+            latestVersion,
+            tagName: release.tag_name || '',
+            releaseName: release.name || '',
+            prerelease: !!release.prerelease,
+            hasUpdate: latestVersion ? compareReleaseVersions(latestVersion, currentVersion) > 0 : false,
+            htmlUrl: release.html_url || '',
+            downloadUrl,
+            assets: assets.map((asset) => ({
+                name: asset.name || '',
+                size: asset.size || 0,
+                downloadUrl: asset.browser_download_url || '',
+            })),
+            publishedAt: release.published_at || '',
+            body: release.body || '',
+        };
+    } catch (error) {
+        const message = error && error.message ? error.message : String(error);
+        console.error('[cocos-mcp-server] GitHub Releases 在线版本检查失败：', message);
+        return {
+            success: false,
+            repository: `${owner}/${repo}`,
+            currentVersion,
+            latestVersion: '',
+            hasUpdate: false,
+            message,
+        };
+    }
+}
+
 const __cocosMcpPreviousLoad = exports.load;
 const __cocosMcpPreviousDefaultLoad = exports.default && exports.default.load;
 async function loadWithPanelAutoStart(...args) {
@@ -765,6 +894,75 @@ async function devReloadPlugin() {
     }
 }
 
+function normalizeEditorRestartOptions(options = {}) {
+    if (typeof options === 'string') {
+        if (options === 'dryRun') {
+            return { dryRun: true };
+        }
+        try {
+            return JSON.parse(options);
+        } catch (_) {
+            return {};
+        }
+    }
+    return options || {};
+}
+
+async function devRestartEditor(options = {}) {
+    try {
+        const normalized = normalizeEditorRestartOptions(options);
+        const dashboardIpcAvailable = typeof process.send === 'function';
+        const projectPath = (globalThis.Editor && Editor.Project && Editor.Project.path) || '';
+        const info = {
+            pid: process.pid,
+            projectPath,
+            dashboardIpcAvailable,
+        };
+
+        if (normalized.dryRun) {
+            return {
+                success: true,
+                dev: true,
+                dryRun: true,
+                ...info,
+                plannedMethod: dashboardIpcAvailable ? 'dashboard editor-restart ipc' : 'none',
+                message: dashboardIpcAvailable
+                    ? 'Cocos Creator restart will use Cocos Dashboard IPC.'
+                    : 'Cocos Dashboard restart IPC is unavailable.',
+            };
+        }
+
+        if (normalized.preferDashboard !== false && dashboardIpcAvailable) {
+            process.send({
+                channel: 'editor-restart',
+            });
+            return {
+                success: true,
+                dev: true,
+                ...info,
+                quitMethod: 'dashboard editor-restart ipc',
+                message: 'Cocos Creator restart requested through Cocos Dashboard.',
+            };
+        }
+
+        return {
+            success: false,
+            dev: true,
+            ...info,
+            quitMethod: 'none',
+            message: 'Cocos Dashboard restart IPC is unavailable. External restart fallback is disabled.',
+        };
+    } catch (error) {
+        const message = error && error.message ? error.message : String(error);
+        console.error('[cocos-mcp-server] restart Cocos Creator failed:', error);
+        return {
+            success: false,
+            dev: true,
+            message,
+        };
+    }
+}
+
 exports.load = loadWithPanelAutoStart;
 exports.startServer = startPanelMcpServer;
 exports.devStartServer = startPanelMcpServer;
@@ -774,7 +972,9 @@ exports.getServerStatus = getPanelServerStatus;
 exports.devGetServerStatus = getPanelServerStatus;
 exports.devUpdateAutoStart = updatePanelAutoStart;
 exports.devGetRegisteredTools = devGetRegisteredTools;
+exports.devGetOnlineVersion = devGetOnlineVersion;
 exports.devReloadPlugin = devReloadPlugin;
+exports.devRestartEditor = devRestartEditor;
 exports.methods = exports.methods || {};
 exports.methods.startServer = startPanelMcpServer;
 exports.methods.devStartServer = startPanelMcpServer;
@@ -784,7 +984,9 @@ exports.methods.getServerStatus = getPanelServerStatus;
 exports.methods.devGetServerStatus = getPanelServerStatus;
 exports.methods.devUpdateAutoStart = updatePanelAutoStart;
 exports.methods.devGetRegisteredTools = devGetRegisteredTools;
+exports.methods.devGetOnlineVersion = devGetOnlineVersion;
 exports.methods.devReloadPlugin = devReloadPlugin;
+exports.methods.devRestartEditor = devRestartEditor;
 if (exports.default) {
     exports.default.load = loadWithPanelAutoStart;
     exports.default.methods = exports.default.methods || {};
@@ -796,5 +998,7 @@ if (exports.default) {
     exports.default.methods.devGetServerStatus = getPanelServerStatus;
     exports.default.methods.devUpdateAutoStart = updatePanelAutoStart;
     exports.default.methods.devGetRegisteredTools = devGetRegisteredTools;
+    exports.default.methods.devGetOnlineVersion = devGetOnlineVersion;
     exports.default.methods.devReloadPlugin = devReloadPlugin;
+    exports.default.methods.devRestartEditor = devRestartEditor;
 }

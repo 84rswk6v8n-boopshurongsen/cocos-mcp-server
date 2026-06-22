@@ -1,7 +1,9 @@
 'use strict';
 
+const fs = require('fs');
 const os = require('os');
 const net = require('net');
+const path = require('path');
 
 const PATCH_FLAG = Symbol.for('cocos-mcp-server.extended-tools-registry.v1');
 const DEFAULT_PREVIEW_PORT = 7456;
@@ -12,7 +14,8 @@ const EXTENDED_TOOL_NAMES = [
     'cocos_preview',
     'cocos_runtime',
     'cocos_physics',
-    'cocos_material'
+    'cocos_material',
+    'cocos_restart'
 ];
 
 function createFreshHandler(modulePath, exportName) {
@@ -21,7 +24,7 @@ function createFreshHandler(modulePath, exportName) {
     const handlerModule = require(modulePath);
     const HandlerClass = handlerModule && handlerModule[exportName];
     if (!HandlerClass) {
-        throw new Error(`扩展工具处理器不存在：${exportName}`);
+        throw new Error(`Extended tool handler was not found: ${exportName}`);
     }
     return new HandlerClass();
 }
@@ -110,6 +113,125 @@ function getPreviewStatus(extra = {}) {
     }, extra);
 }
 
+function getProjectPath() {
+    try {
+        if (globalThis.Editor && Editor.Project && Editor.Project.path) {
+            return Editor.Project.path;
+        }
+    }
+    catch (_) {}
+    return process.cwd();
+}
+
+function getCreatorVersion() {
+    try {
+        const execPath = process.execPath || '';
+        const parent = path.basename(path.dirname(execPath));
+        if (/^\d+\.\d+\.\d+/.test(parent)) {
+            return parent;
+        }
+    }
+    catch (_) {}
+    try {
+        if (globalThis.Editor && Editor.App && Editor.App.version) {
+            return Editor.App.version;
+        }
+    }
+    catch (_) {}
+    return '';
+}
+
+function getRestartStatus() {
+    const dashboardIpcAvailable = typeof process.send === 'function';
+    return {
+        dashboardIpcAvailable,
+        projectPath: getProjectPath(),
+        creatorVersion: getCreatorVersion(),
+        processPid: process.pid,
+        processExecPath: process.execPath,
+        preservesLoginState: dashboardIpcAvailable,
+        message: dashboardIpcAvailable
+            ? 'Dashboard restart IPC is available.'
+            : 'Dashboard restart IPC is unavailable. External restart fallback is disabled.'
+    };
+}
+
+function createRestartToolDefinition() {
+    return {
+        name: 'restart',
+        description: [
+            'Restart Cocos Creator from MCP.',
+            'This uses the Cocos Dashboard editor-restart IPC so Dashboard login state is preserved.',
+            'External restart fallback is disabled.',
+            'Use this MCP tool directly; do not call plugin restart methods through cocos_scene.execute_script because that path only reports script dispatch success.'
+        ].join('\n'),
+        inputSchema: {
+            type: 'object',
+            properties: {
+                action: {
+                    type: 'string',
+                    enum: ['status', 'restart'],
+                    description: 'status checks the restart path; restart requests an editor restart.'
+                },
+                preferDashboard: {
+                    type: 'boolean',
+                    description: 'Use Dashboard IPC when available. Default true.'
+                },
+                dryRun: {
+                    type: 'boolean',
+                    description: 'Return the planned restart path without restarting.'
+                }
+            },
+            required: ['action']
+        }
+    };
+}
+
+async function executeRestartTool(args = {}) {
+    const action = args.action;
+    const status = getRestartStatus();
+
+    if (action === 'status' || args.dryRun) {
+        return {
+            success: true,
+            message: status.message,
+            data: Object.assign({}, status, {
+                dryRun: !!args.dryRun,
+                plannedMethod: status.dashboardIpcAvailable && args.preferDashboard !== false
+                    ? 'dashboard editor-restart ipc'
+                    : 'none'
+            })
+        };
+    }
+
+    if (action !== 'restart') {
+        return {
+            success: false,
+            error: `Unknown preview action: ${action || ''}`,
+            data: status
+        };
+    }
+
+    if (args.preferDashboard !== false && status.dashboardIpcAvailable) {
+        process.send({ channel: 'editor-restart' });
+        return {
+            success: true,
+            message: 'Cocos Creator restart requested through Cocos Dashboard.',
+            data: Object.assign({}, status, {
+                quitMethod: 'dashboard editor-restart ipc'
+            })
+        };
+    }
+
+    return {
+        success: false,
+        message: 'Dashboard restart IPC is unavailable. External restart fallback is disabled.',
+        data: Object.assign({}, status, {
+            quitMethod: 'none'
+        })
+    };
+}
+
 function markPreviewStarted(args, result, beforeReachable) {
     const state = getPreviewState();
     const port = Number(args && args.port) || state.port || DEFAULT_PREVIEW_PORT;
@@ -156,22 +278,22 @@ function markPreviewStopped(args, result) {
 function createLegacyPreviewToolDefinition() {
     return {
         name: 'preview',
-        description: 'Cocos 浏览器预览辅助工具 - 启动/停止预览，并返回预览状态、启动时间、预览地址和是否可能复用已有服务。',
+        description: 'Cocos browser preview helper. Start or stop preview and return preview state, launch time, URLs, and reuse information.',
         inputSchema: {
             type: 'object',
             properties: {
                 action: {
                     type: 'string',
                     enum: ['start', 'stop', 'status'],
-                    description: '预览操作：start 启动，stop 停止，status 获取状态'
+                    description: 'Preview action: start, stop, or status.'
                 },
                 platform: {
                     type: 'string',
-                    description: '预览平台，通常为 browser'
+                    description: 'Preview platform, usually browser.'
                 },
                 port: {
                     type: 'number',
-                    description: '预览服务端口，默认 7456'
+                    description: 'Preview server port. Default is 7456.'
                 }
             },
             required: ['action']
@@ -183,9 +305,9 @@ function createPreviewToolDefinition() {
     return {
         name: 'preview',
         description: [
-            'Cocos 浏览器预览辅助工具 - 启动/停止预览，并返回预览状态、启动时间、预览地址和是否复用已有服务。',
-            '当预览服务已在运行时，start 默认静默复用，不会再次打开原始预览页。',
-            '需要可视化调试绘制时，不要用内部浏览器承载页面；优先调用 cocos_runtime.open_injected_preview 打开系统外部浏览器自动注入页。'
+            'Cocos browser preview helper. Start or stop preview and return preview state, launch time, URLs, and reuse information.',
+            'When a preview server is already running, start reuses it silently by default and does not reopen the raw preview page.',
+            'For visual debug overlays, prefer cocos_runtime.open_injected_preview in an external system browser.'
         ].join('\n'),
         inputSchema: {
             type: 'object',
@@ -193,27 +315,27 @@ function createPreviewToolDefinition() {
                 action: {
                     type: 'string',
                     enum: ['start', 'stop', 'status'],
-                    description: '预览操作：start 启动或复用，stop 停止，status 获取状态'
+                    description: 'Preview action: start or reuse, stop, or status.'
                 },
                 platform: {
                     type: 'string',
-                    description: '预览平台，通常为 browser'
+                    description: 'Preview platform, usually browser.'
                 },
                 port: {
                     type: 'number',
-                    description: '预览服务端口，默认 7456'
+                    description: 'Preview server port. Default is 7456.'
                 },
                 reuseExisting: {
                     type: 'boolean',
-                    description: '当端口已有预览服务时是否静默复用，默认 true；设为 false 会重新调用 Cocos 预览启动'
+                    description: 'Reuse an existing preview server on the same port. Default is true; false requests a new Cocos preview start.'
                 },
                 openBrowser: {
                     type: 'boolean',
-                    description: '是否强制打开原始预览浏览器页，默认 false；可视化调试请保持 false 并使用 cocos_runtime.open_injected_preview'
+                    description: 'Force opening the raw preview browser page. Default is false; keep false for visual debug and use cocos_runtime.open_injected_preview.'
                 },
                 forceOpen: {
                     type: 'boolean',
-                    description: 'openBrowser 的别名；设为 true 时即使端口已可达也会调用 Cocos run browser'
+                    description: 'Alias for openBrowser. If true, calls Cocos run browser even when the port is already reachable.'
                 }
             },
             required: ['action']
@@ -221,11 +343,46 @@ function createPreviewToolDefinition() {
     };
 }
 
+function patchEditorRestartToolDefinition(tools) {
+    const editorTool = tools.find((tool) => tool && (tool.name === 'editor' || tool.name === 'cocos_editor'));
+    if (!editorTool || !editorTool.inputSchema || !editorTool.inputSchema.properties) {
+        return tools;
+    }
+
+    const properties = editorTool.inputSchema.properties;
+    if (properties.action && Array.isArray(properties.action.enum)) {
+        for (const actionName of ['restart', 'restart_status']) {
+            if (!properties.action.enum.includes(actionName)) {
+                properties.action.enum.push(actionName);
+            }
+        }
+    }
+
+    properties.preferDashboard = properties.preferDashboard || {
+        type: 'boolean',
+        description: 'Restart actions: use Cocos Dashboard IPC when available. Default true.'
+    };
+    if (properties.allowDirectFallback) {
+        delete properties.allowDirectFallback;
+    }
+    properties.dryRun = properties.dryRun || {
+        type: 'boolean',
+        description: 'Restart actions: return the planned restart path without restarting.'
+    };
+
+    const restartNote = 'Restart actions: use restart_status to check Dashboard IPC and restart to request a Dashboard-preserving editor restart.';
+    if (typeof editorTool.description === 'string' && !editorTool.description.includes('restart_status')) {
+        editorTool.description = `${editorTool.description}\n${restartNote}`;
+    }
+    return tools;
+}
+
 function getExtendedToolDefinitions() {
     return [
         createAnimationMaskHandler().getToolDefinition(),
         createAnimationGraphHandler().getToolDefinition(),
         createPreviewToolDefinition(),
+        createRestartToolDefinition(),
         createRuntimeHandler().getToolDefinition(),
         createPhysicsHandler().getToolDefinition()
     ];
@@ -241,6 +398,7 @@ function upsertToolDefinitions(tools, definitions) {
             tools.push(definition);
         }
     }
+    patchEditorRestartToolDefinition(tools);
     return tools;
 }
 
@@ -270,7 +428,7 @@ async function runPreviewAction(instance, originalExecute, args) {
         });
         const result = {
             success: true,
-            message: '预览服务已在运行，已静默复用现有预览服务。',
+            message: 'Preview server is already running; reused the existing preview server silently.',
             data: {
                 platform: runArgs.platform,
                 reusedExistingServer: true,
@@ -290,13 +448,13 @@ async function runPreviewAction(instance, originalExecute, args) {
     const previewStatus = markPreviewStarted(runArgs, result, beforeReachable);
     if (result && typeof result === 'object') {
         return Object.assign({}, result, {
-            message: result.message || '浏览器预览已启动。',
+            message: result.message || 'Browser preview started.',
             data: Object.assign({}, result.data || {}, { previewStatus })
         });
     }
     return {
         success: true,
-        message: '浏览器预览已启动。',
+        message: 'Browser preview started.',
         data: { result, previewStatus }
     };
 }
@@ -307,13 +465,13 @@ async function stopPreviewAction(instance, originalExecute, args) {
     const previewStatus = markPreviewStopped(stopArgs, result);
     if (result && typeof result === 'object') {
         return Object.assign({}, result, {
-            message: result.message || '浏览器预览已停止。',
+            message: result.message || 'Browser preview stopped.',
             data: Object.assign({}, result.data || {}, { previewStatus })
         });
     }
     return {
         success: true,
-        message: '浏览器预览已停止。',
+        message: 'Browser preview stopped.',
         data: { result, previewStatus }
     };
 }
@@ -329,13 +487,13 @@ async function executePreviewTool(instance, originalExecute, args) {
     if (action === 'status') {
         return {
             success: true,
-            message: '已获取浏览器预览状态。',
+            message: 'Browser preview status loaded.',
             data: getPreviewStatus({ port: args && args.port })
         };
     }
     return {
         success: false,
-        error: `未知预览操作：${action || ''}`
+        error: `Unknown preview action: ${action || ''}`
     };
 }
 
@@ -352,9 +510,16 @@ async function executeExtendedTool(instance, originalExecute, toolName, args) {
     if (normalizedName === 'editor' && (action === 'preview_status' || action === 'get_preview_status')) {
         return {
             success: true,
-            message: '已获取浏览器预览状态。',
+            message: 'Browser preview status loaded.',
             data: getPreviewStatus({ port: args && args.port })
         };
+    }
+
+    if (normalizedName === 'editor' && (action === 'restart' || action === 'restart_status')) {
+        const restartArgs = Object.assign({}, args || {}, {
+            action: action === 'restart' ? 'restart' : 'status'
+        });
+        return await executeRestartTool(restartArgs);
     }
 
     if (isToolName(toolName, 'animation_mask')) {
@@ -365,6 +530,9 @@ async function executeExtendedTool(instance, originalExecute, toolName, args) {
     }
     if (isToolName(toolName, 'preview')) {
         return await executePreviewTool(instance, originalExecute, args || {});
+    }
+    if (isToolName(toolName, 'restart')) {
+        return await executeRestartTool(args || {});
     }
     if (isToolName(toolName, 'runtime')) {
         return await executeHandler(createRuntimeHandler, args);

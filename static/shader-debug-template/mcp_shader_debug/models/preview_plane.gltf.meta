@@ -1,0 +1,75 @@
+{
+  "ver": "2.3.13",
+  "importer": "gltf",
+  "imported": true,
+  "uuid": "20d90e45-c335-45d8-9111-b408e541b7b3",
+  "files": [],
+  "subMetas": {
+    "3ed1c": {
+      "importer": "gltf-mesh",
+      "uuid": "20d90e45-c335-45d8-9111-b408e541b7b3@3ed1c",
+      "displayName": "",
+      "id": "3ed1c",
+      "name": "preview_plane.mesh",
+      "userData": {
+        "gltfIndex": 0,
+        "triangleCount": 2
+      },
+      "ver": "1.1.1",
+      "imported": true,
+      "files": [
+        ".bin",
+        ".json"
+      ],
+      "subMetas": {}
+    },
+    "31ca9": {
+      "importer": "gltf-scene",
+      "uuid": "20d90e45-c335-45d8-9111-b408e541b7b3@31ca9",
+      "displayName": "",
+      "id": "31ca9",
+      "name": "preview_plane.prefab",
+      "userData": {
+        "gltfIndex": 0
+      },
+      "ver": "1.0.14",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    }
+  },
+  "userData": {
+    "imageMetas": [],
+    "lods": {
+      "enable": false,
+      "hasBuiltinLOD": false,
+      "options": [
+        {
+          "screenRatio": 0.25,
+          "faceCount": 1
+        },
+        {
+          "screenRatio": 0.125,
+          "faceCount": 0.25
+        },
+        {
+          "screenRatio": 0.01,
+          "faceCount": 0.1
+        }
+      ]
+    },
+    "assetFinder": {
+      "meshes": [
+        "20d90e45-c335-45d8-9111-b408e541b7b3@3ed1c"
+      ],
+      "skeletons": [],
+      "textures": [],
+      "materials": [],
+      "scenes": [
+        "20d90e45-c335-45d8-9111-b408e541b7b3@31ca9"
+      ]
+    }
+  }
+}
